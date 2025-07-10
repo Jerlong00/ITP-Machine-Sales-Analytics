@@ -2,26 +2,32 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 from statsmodels.tsa.statespace.sarimax import SARIMAX
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+import numpy as np
 import os
 
 st.set_page_config(page_title="AI Sales Forecasting", layout="wide")
 st.title("📈 AI Sales Forecasting App (Multi-Frequency)")
 
-st.markdown("✅ Upload your Excel file with daily machine sales data. Public holiday support coming soon!")
+st.markdown("✅ Upload your Excel or CSV file with machine sales data. Public holiday support coming soon!")
 
-uploaded_file = st.file_uploader("📤 Upload Excel File", type=["xlsx", "xls"])
+uploaded_file = st.file_uploader("📤 Upload Excel or CSV File", type=["xlsx", "xls", "csv"])
 
 if uploaded_file:
     try:
-        # Load Excel
-        xls = pd.ExcelFile(uploaded_file)
-        df = pd.read_excel(xls, sheet_name=0)
+        filename = uploaded_file.name.lower()
+
+        if filename.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            xls = pd.ExcelFile(uploaded_file)
+            df = pd.read_excel(xls, sheet_name=0)
 
         # 🔧 CLEAN COLUMN NAMES
-        df.columns = df.columns.astype(str)               # ensure all column names are strings
-        df.columns = df.columns.str.strip()               # strip whitespace
-        df.columns = df.columns.str.replace('\xa0', '')   # remove non-breaking spaces
-        df.columns = df.columns.str.replace(':', r'\:')   # escape colons for Altair
+        df.columns = df.columns.astype(str)
+        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.replace('\xa0', '')
+        df.columns = df.columns.str.replace(':', r'\:')
 
         # 🕵️ Show the columns for debugging
         st.write("📋 Columns found in uploaded file:")
@@ -38,13 +44,9 @@ if uploaded_file:
         df = df.dropna(subset=[selected_date_col])
         df.set_index(selected_date_col, inplace=True)
 
-        # 🛠️ Detect machine columns
-        machine_cols = [col for col in df.columns if col.upper().startswith("A")]
-        if not machine_cols:
-            st.error("❌ No machine columns found. Expected columns like A1, A2, A3...")
-            st.stop()
-
-        selected_machine = st.selectbox("🛠️ Select machine to forecast:", machine_cols)
+        # ❌ Remove outliers
+        if "outlier_flag" in df.columns:
+            df = df[df["outlier_flag"] == 0]
 
         # ⏱️ Frequency selection
         freq = st.selectbox("📊 Forecast Frequency:", [
@@ -61,9 +63,31 @@ if uploaded_file:
         }
 
         selected_freq = freq_map[freq]
-        df_resampled = df[[selected_machine]].resample(selected_freq).sum()
 
-        # ✅ Plot with Matplotlib (no Altair errors)
+        # 🧠 Pivot long-form data to wide format
+        if "locationId" in df.columns and "Qty" in df.columns:
+            df_pivoted = df.pivot_table(index=df.index, columns="locationId", values="Qty", aggfunc="sum")
+            machine_cols = df_pivoted.columns.astype(str).tolist()
+
+            selected_machine = st.selectbox("🛠 Select machine to forecast:", machine_cols)
+
+            # 🔁 Smart resampling method
+            if freq in ["Daily", "Weekly"]:
+                resample_method = "sum"
+            else:
+                resample_method = "mean"
+
+            df_resampled = (
+                df_pivoted[selected_machine]
+                .resample(selected_freq)
+                .agg(resample_method)
+                .to_frame(name=selected_machine)
+            )
+        else:
+            st.error("❌ Your file must contain 'locationId' and 'Qty' columns.")
+            st.stop()
+
+        # ✅ Plot resampled data
         st.subheader(f"📉 {selected_machine} Sales Over Time ({freq})")
         fig, ax = plt.subplots()
         df_resampled[selected_machine].plot(ax=ax, label="Historical")
@@ -71,7 +95,7 @@ if uploaded_file:
         ax.legend()
         st.pyplot(fig)
 
-        # ⏩ Forecast period
+        # 🔮 Forecast period
         step_defaults = {
             "Daily": 30,
             "Weekly": 12,
@@ -82,19 +106,34 @@ if uploaded_file:
         }
 
         forecast_steps = st.slider(
-            f"🔮 Forecast how many {freq.lower()} periods?",
+            f"📆 How many {freq.lower()} periods to forecast?",
             2, step_defaults[freq]*2, step_defaults[freq]
         )
 
-        # 🧠 SARIMAX
+        # 📈 SARIMAX model
         model = SARIMAX(df_resampled[selected_machine], order=(1,1,1), seasonal_order=(1,1,1,4))
         results = model.fit(disp=False)
 
         forecast = results.get_forecast(steps=forecast_steps)
         forecast_df = forecast.predicted_mean.rename(f"{selected_machine}_forecast")
 
-        # 📈 Forecast Plot
-        st.subheader("📊 Forecast vs Historical")
+        # 📏 Metrics
+        actual = df_resampled[selected_machine].iloc[-forecast_steps:]
+        predicted = forecast_df
+        actual = actual[-len(predicted):]
+
+        rmse = mean_squared_error(actual, predicted) ** 0.5
+        mae = mean_absolute_error(actual, predicted)
+        mape = np.mean(np.abs((actual - predicted) / actual.replace(0, np.nan))) * 100
+
+        st.subheader("📊 Forecast Accuracy Metrics")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("MAE", f"{mae:.2f}")
+        col2.metric("RMSE", f"{rmse:.2f}")
+        col3.metric("MAPE", f"{mape:.2f}%")
+
+        # 📉 Forecast plot
+        st.subheader("📈 Forecast vs Historical")
         fig2, ax2 = plt.subplots()
         df_resampled[selected_machine].plot(ax=ax2, label="Historical")
         forecast_df.plot(ax=ax2, label="Forecast", linestyle="--")
