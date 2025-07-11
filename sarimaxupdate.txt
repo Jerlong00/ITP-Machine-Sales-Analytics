@@ -1,0 +1,73 @@
+Version 1.1
+
+✅ 1. Outlier Smoothing via Z-Score
+What it does:
+Detects extreme spikes in sales using the Z-score method (threshold of ±3) and temporarily nulls them out. Those gaps are then filled using linear interpolation.
+
+Why it matters:
+Prevents one-off events or recording errors from distorting the SARIMAX forecast.
+
+✅ 2. Missing Value Interpolation
+What it does:
+Backfills missing data using previous available values (bfill) and uses interpolation after removing outliers.
+
+Why it matters:
+Time series forecasting hates missing data. This ensures continuity while still respecting historical patterns.
+
+✅ 3. Box-Cox Transformation (Toggleable)
+What it does:
+Optionally applies a Box-Cox transformation to stabilize variance (great for data with exponential trends). You can toggle it on/off in Streamlit.
+
+Why it matters:
+Improves model stationarity, especially helpful when forecasting machines with seasonal or exponential growth.
+
+✅ 4. Dynamic Seasonal Period Detection
+What it does:
+Automatically sets the seasonal_period (the “m” in SARIMAX) based on the frequency selected:
+
+Daily → 7 (weekly seasonality)
+
+Weekly → 52 (yearly seasonality)
+
+Monthly → 12
+
+Quarterly → 4
+
+Bi-annually → 2
+
+Yearly → 1
+
+Why it matters:
+Tailors the SARIMAX model to fit your frequency choice, boosting forecast relevance and reducing overfitting.
+
+✅ 5. Resampling Strategy (Sum vs Mean)
+What it does:
+
+Daily/Weekly data = sum (e.g. sales volume per day/week)
+
+Monthly and above = mean (e.g. average monthly output)
+
+Why it matters:
+Prevents high-level periods from being bloated by summing across long timeframes.
+
+✅ 6. Forecast Accuracy Metrics
+What it does:
+Calculates and displays:
+
+MAE (Mean Absolute Error) – simple avg error
+
+RMSE (Root Mean Squared Error) – sensitive to large errors
+
+MAPE (Mean Absolute Percentage Error) – great for percentage-based benchmarks
+
+Rolling MAE – trend-stability measure using lag-1 differences
+
+Why it matters:
+These metrics help you assess model quality and give stakeholders confidence in the forecast’s reliability.
+
+✅ 7. Forecast Visualization & Export
+Dual-line chart: historical + forecast
+
+Forecast is plotted with a dashed line
+
+CSV export button with filename auto-tagged by machine + frequency
