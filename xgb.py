@@ -25,10 +25,6 @@ if uploaded_file:
         df['saleDate'] = pd.to_datetime(df['saleDate'])
         df = df.dropna(subset=['saleDate'])
 
-        df['day_of_week'] = df['saleDate'].dt.dayofweek
-        df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
-        df['month'] = df['saleDate'].dt.month
-
         public_holidays = pd.to_datetime([
             "2023-01-01", "2023-01-02", "2023-01-22", "2023-01-23", "2023-01-24",
             "2023-04-07", "2023-04-22", "2023-05-01", "2023-06-02", "2023-06-29",
@@ -38,155 +34,116 @@ if uploaded_file:
             "2025-01-01", "2025-01-29", "2025-01-30", "2025-03-31", "2025-04-18",
             "2025-05-01", "2025-05-03", "2025-05-12"
         ])
-        df['is_holiday'] = df['saleDate'].isin(public_holidays).astype(int)
 
         if 'locationId' in df.columns and 'Qty' in df.columns:
             machines = df['locationId'].unique().tolist()
-            selected_machine = st.selectbox("🛠 Select machine to forecast:", machines)
-            model_type = st.radio("📊 Select model:", ["SARIMAX", "XGBoost"])
+            selected_machine = st.selectbox("\U0001F6E0 Select machine to forecast:", machines)
 
-            freq = st.selectbox("📊 Forecast Frequency:", [
-                "Daily", "Weekly", "Monthly", "Quarterly", "Bi-annually", "Yearly"
-            ])
-
-            freq_map = {
-                "Daily": "D",
-                "Weekly": "W",
-                "Monthly": "M",
-                "Quarterly": "Q",
-                "Bi-annually": "2Q",
-                "Yearly": "Y"
-            }
-
+            freq = st.selectbox("\U0001F4CA Forecast Frequency:", ["Daily", "Weekly", "Monthly"])
+            freq_map = {"Daily": "D", "Weekly": "W", "Monthly": "M"}
             selected_freq = freq_map[freq]
+
+            forecast_steps = st.slider("⏱️ Forecast Steps (Periods)", 2, 60, 14)
+
             df_machine = df[df['locationId'] == selected_machine].copy()
             df_machine.set_index('saleDate', inplace=True)
-            df_resampled = df_machine['Qty'].resample(selected_freq).sum().to_frame()
-            df_resampled.reset_index(inplace=True)
-            df_resampled.rename(columns={'saleDate': 'ds', 'Qty': 'y'}, inplace=True)
+            df_machine = df_machine.sort_index()
 
-            df_resampled['day_of_week'] = df_resampled['ds'].dt.dayofweek
-            df_resampled['is_weekend'] = df_resampled['day_of_week'].isin([5, 6]).astype(int)
-            df_resampled['month'] = df_resampled['ds'].dt.month
-            df_resampled['is_holiday'] = df_resampled['ds'].isin(public_holidays).astype(int)
+            df_daily = df_machine['Qty'].resample('D').sum().reset_index()
+            df_daily.rename(columns={'saleDate': 'ds', 'Qty': 'y'}, inplace=True)
 
-            forecast_steps = st.slider("⏱️ Forecast Steps (Periods)", 4, 100, 12)
-            use_boxcox = st.checkbox("📐 Apply Box-Cox transformation (stabilize variance)", value=False)
+            df_daily['day_of_week'] = df_daily['ds'].dt.dayofweek
+            df_daily['is_weekend'] = df_daily['day_of_week'].isin([5, 6]).astype(int)
+            df_daily['month'] = df_daily['ds'].dt.month
+            df_daily['is_holiday'] = df_daily['ds'].isin(public_holidays).astype(int)
 
-            if model_type == "SARIMAX":
-                seasonal_periods = {"D": 7, "W": 52, "M": 12, "Q": 4, "2Q": 2, "Y": 1}
-                seasonal_m = seasonal_periods[selected_freq]
+            df_daily['lag_1'] = df_daily['y'].shift(1)
+            df_daily['lag_7'] = df_daily['y'].shift(7)
+            df_daily['lag_14'] = df_daily['y'].shift(14)
+            df_daily = df_daily.dropna()
 
-                z_scores = zscore(df_resampled['y'].bfill())
-                threshold = 3
-                df_resampled['cleaned'] = df_resampled['y']
-                df_resampled.loc[(z_scores > threshold) | (z_scores < -threshold), 'cleaned'] = np.nan
-                df_resampled['cleaned'].interpolate(method="linear", inplace=True)
-                df_resampled['cleaned_filled'] = df_resampled['cleaned'].bfill().clip(lower=0.01)
+            features = ['day_of_week', 'is_weekend', 'month', 'is_holiday', 'lag_1', 'lag_7', 'lag_14']
+            X = df_daily[features]
+            y = df_daily['y']
 
-                if use_boxcox:
-                    df_resampled['transformed'], lam = boxcox(df_resampled['cleaned_filled'])
-                    series_to_use = df_resampled['transformed']
-                else:
-                    series_to_use = df_resampled['cleaned_filled']
+            model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100, random_state=42)
+            model.fit(X, y)
 
-                train = series_to_use.iloc[:-forecast_steps]
-                test = df_resampled['y'].iloc[-forecast_steps:]
+            # Use the last 'forecast_steps' rows to compute last week forecast
+            X_test = X.iloc[-forecast_steps:]
+            y_test = y.iloc[-forecast_steps:]
+            y_pred_test = model.predict(X_test)
 
-                try:
-                    model = SARIMAX(train, order=(1,1,1), seasonal_order=(1,1,1,seasonal_m))
-                    results = model.fit(disp=False)
-                    predicted = results.forecast(steps=forecast_steps)
-                    if use_boxcox:
-                        predicted = inv_boxcox(predicted, lam)
+            # Append predictions to forecast_input for consistency in future forecasting
+            forecast_input = df_daily.copy()
+            last_known_date = forecast_input['ds'].iloc[-1]
+            for i in range(forecast_steps):
+                forecast_input = pd.concat([forecast_input, pd.DataFrame({
+                    'ds': [X_test.index[i]],
+                    'y': [y_pred_test[i]]
+                })], ignore_index=True)
 
-                    mae = mean_absolute_error(test, predicted)
-                    rmse = mean_squared_error(test, predicted) ** 0.5
-                    mape = np.mean(np.abs((test - predicted) / test.replace(0, np.nan))) * 100
+            # Forecast future based on those appended rows
+            future_dates = pd.date_range(start=last_known_date + pd.Timedelta(days=1), periods=forecast_steps, freq='D')
+            forecast_list = []
+            for date in future_dates:
+                features_dict = {
+                    'day_of_week': date.dayofweek,
+                    'is_weekend': int(date.dayofweek in [5, 6]),
+                    'month': date.month,
+                    'is_holiday': int(date in public_holidays),
+                    'lag_1': forecast_input['y'].iloc[-1],
+                    'lag_7': forecast_input['y'].iloc[-7] if len(forecast_input) >= 7 else forecast_input['y'].mean(),
+                    'lag_14': forecast_input['y'].iloc[-14] if len(forecast_input) >= 14 else forecast_input['y'].mean()
+                }
+                X_pred = pd.DataFrame([features_dict])
+                y_pred = model.predict(X_pred)[0]
+                forecast_list.append({'ds': date, 'Forecast': y_pred})
+                forecast_input = pd.concat([forecast_input, pd.DataFrame({'ds': [date], 'y': [y_pred]})], ignore_index=True)
 
-                    st.subheader("📊 SARIMAX Accuracy Metrics")
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("MAE", f"{mae:.2f}")
-                    col2.metric("RMSE", f"{rmse:.2f}")
-                    col3.metric("MAPE", f"{mape:.2f}%")
+            df_pred = pd.DataFrame(forecast_list).set_index('ds')
+            df_pred.index = pd.to_datetime(df_pred.index)
+            df_pred = df_pred.resample(selected_freq).sum()
 
-                    st.subheader("📈 SARIMAX Forecast")
-                    fig, ax = plt.subplots()
-                    df_resampled['y'].plot(ax=ax, label='Historical')
-                    pd.Series(predicted, index=test.index).plot(ax=ax, label='Forecast', linestyle="--")
-                    ax.legend()
-                    st.pyplot(fig)
+            df_recent = df_daily.set_index('ds')
+            df_recent = df_recent[df_recent.index >= df_recent.index.max() - pd.Timedelta(days=30)]
+            df_recent_resampled = df_recent.resample(selected_freq).sum()
 
-                    st.download_button(
-                        label="📥 Download Forecast CSV",
-                        data=pd.Series(predicted, index=test.index).to_csv().encode(),
-                        file_name=f"{selected_machine}_{freq.lower()}_sarimax_forecast.csv",
-                        mime="text/csv"
-                    )
+            df_last_week = pd.DataFrame({
+                'ds': df_daily['ds'].iloc[-forecast_steps:],
+                'Actual': y_test.values,
+                'Predicted': y_pred_test
+            })
+            df_last_week.set_index('ds', inplace=True)
+            df_last_week.index = pd.to_datetime(df_last_week.index)
+            df_last_week_resampled = df_last_week.resample(selected_freq).sum()
 
-                except Exception as e:
-                    st.error(f"SARIMAX failed: {e}")
+            mae = mean_absolute_error(y_test, y_pred_test)
+            rmse = mean_squared_error(y_test, y_pred_test) ** 0.5
+            mape = np.mean(np.abs((y_test - y_pred_test) / y_test.replace(0, np.nan))) * 100
+            rolling_mae = np.mean(np.abs(df_daily['y'].diff(periods=7)))
 
-            else:
-                df_daily = df_machine['Qty'].resample('D').sum().reset_index()
-                df_daily.rename(columns={'saleDate': 'ds', 'Qty': 'y'}, inplace=True)
+            st.subheader("\U0001F4CA XGBoost Accuracy Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("MAE", f"{mae:.2f}")
+            col2.metric("RMSE", f"{rmse:.2f}")
+            col3.metric("MAPE", f"{mape:.2f}%")
+            col4.metric("Rolling MAE (7d)", f"{rolling_mae:.2f}")
 
-                df_daily['day_of_week'] = df_daily['ds'].dt.dayofweek
-                df_daily['is_weekend'] = df_daily['day_of_week'].isin([5, 6]).astype(int)
-                df_daily['month'] = df_daily['ds'].dt.month
-                df_daily['is_holiday'] = df_daily['ds'].isin(public_holidays).astype(int)
+            st.subheader("\U0001F4C8 XGBoost Forecast")
+            fig, ax = plt.subplots(figsize=(10, 4))
+            df_recent_resampled['y'].plot(ax=ax, label='Past 1 Month', marker='o', color='blue')
+            df_last_week_resampled['Predicted'].plot(ax=ax, label='Forecast (last week)', linestyle='--', marker='x', color='orange')
+            df_pred['Forecast'].plot(ax=ax, label='Forecast (future)', linestyle='--', marker='x', color='green')
+            ax.legend()
+            st.pyplot(fig)
 
-                df_daily['lag_1'] = df_daily['y'].shift(1)
-                df_daily['lag_7'] = df_daily['y'].shift(7)
-                df_daily['lag_14'] = df_daily['y'].shift(14)
-                df_daily.dropna(inplace=True)
-
-                features = ['day_of_week', 'is_weekend', 'month', 'is_holiday', 'lag_1', 'lag_7', 'lag_14']
-                X = df_daily[features]
-                y = df_daily['y']
-                dates = df_daily['ds']
-
-                X_train, y_train = X.iloc[:-forecast_steps], y.iloc[:-forecast_steps]
-                X_test, y_test = X.iloc[-forecast_steps:], y.iloc[-forecast_steps:]
-                dates_test = dates.iloc[-forecast_steps:]
-
-                model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100, random_state=42)
-                model.fit(X_train, y_train)
-                preds = model.predict(X_test)
-
-                df_pred = pd.DataFrame({'ds': dates_test, 'Forecast': preds})
-                df_pred.set_index('ds', inplace=True)
-                df_pred = df_pred.resample(selected_freq).sum()
-
-                df_true = pd.DataFrame({'ds': dates_test, 'y': y_test.values})
-                df_true.set_index('ds', inplace=True)
-                df_true = df_true.resample(selected_freq).sum()
-
-                mae = mean_absolute_error(df_true['y'], df_pred['Forecast'])
-                rmse = mean_squared_error(df_true['y'], df_pred['Forecast']) ** 0.5
-                mape = np.mean(np.abs((df_true['y'] - df_pred['Forecast']) / df_true['y'].replace(0, np.nan))) * 100
-
-                st.subheader("📊 XGBoost Accuracy Metrics")
-                col1, col2, col3 = st.columns(3)
-                col1.metric("MAE", f"{mae:.2f}")
-                col2.metric("RMSE", f"{rmse:.2f}")
-                col3.metric("MAPE", f"{mape:.2f}%")
-
-                st.subheader("📈 XGBoost Forecast")
-                fig, ax = plt.subplots(figsize=(10, 4))
-                df_true['y'].plot(ax=ax, label='Actual', color='blue', marker='o')
-                df_pred['Forecast'].plot(ax=ax, label='Forecast', linestyle='--', color='orange', marker='x')
-                ax.set_ylim(min(df_true['y'].min(), df_pred['Forecast'].min()) * 0.95,
-                            max(df_true['y'].max(), df_pred['Forecast'].max()) * 1.05)
-                ax.legend()
-                st.pyplot(fig)
-
-                st.download_button(
-                    label="📥 Download XGBoost Forecast CSV",
-                    data=df_pred.to_csv().encode(),
-                    file_name=f"{selected_machine}_{freq.lower()}_xgboost_forecast.csv",
-                    mime="text/csv"
-                )
+            st.download_button(
+                label="\U0001F4C5 Download XGBoost Forecast CSV",
+                data=df_pred.to_csv().encode(),
+                file_name=f"{selected_machine}_{freq.lower()}_xgboost_forecast.csv",
+                mime="text/csv"
+            )
 
     except Exception as e:
         st.error(f"❌ Error processing file: {e}")
