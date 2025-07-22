@@ -7,7 +7,7 @@ import matplotlib.dates as mdates
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from scipy.special import inv_boxcox
 
-# Assume public holiday list
+# Public holidays
 public_holidays = pd.to_datetime([
     "2023-01-01", "2023-02-10", "2023-04-07", "2023-05-01",
     "2023-06-02", "2023-08-09", "2023-11-11", "2023-12-25",
@@ -67,17 +67,15 @@ def run_prophet_forecast(
     test_actual = df_resampled[selected_machine].iloc[-validation_steps:]
     train_actual = df_resampled[selected_machine].iloc[-(validation_steps + 60):-validation_steps]
 
-    # Cleanly separate test prediction and future forecast
-    model_prediction = forecast_series.loc[test_actual.index]  # align to validation
-    model_future = forecast_series[forecast_series.index > test_actual.index[-1]]  # starts after validation
+    # Split forecast
+    model_prediction = forecast_series.loc[test_actual.index]
+    model_future = forecast_series[forecast_series.index > test_actual.index[-1]]
 
-    # Accuracy
     test_pred = model_prediction
     mae = mean_absolute_error(test_actual, test_pred)
     rmse = mean_squared_error(test_actual, test_pred) ** 0.5
     mape = np.mean(np.abs((test_actual - test_pred) / test_actual.replace(0, np.nan))) * 100
 
-    # Metrics
     st.subheader("📊 Forecast Accuracy Metrics")
     c1, c2, c3 = st.columns(3)
     c1.metric("MAE", f"{mae:.2f}")
@@ -85,7 +83,6 @@ def run_prophet_forecast(
     c3.metric("MAPE", f"{mape:.2f}%" if not np.isnan(mape) else "N/A")
     st.caption(f"⚠️ Forecast clipped to 0 - {y_cap:.1f} range for stability.")
 
-    # Display controls
     st.subheader("🔎 Display Settings")
     max_periods = len(df_resampled)
     display_periods = st.slider(
@@ -110,31 +107,33 @@ def run_prophet_forecast(
     for x, y in zip(test_actual.index, test_actual.values):
         ax.text(x, y, f"{y:.0f}", fontsize=8, ha='center', va='bottom', color="purple")
 
-    # 3. Model predictions (test)
+    # 3. Predictions (test)
     ax.plot(model_prediction.index, model_prediction.values, color="orange", linestyle="--", marker="x", label="Model Predictions (Test)")
     for x, y in zip(model_prediction.index, model_prediction.values):
         ax.text(x, y, f"{y:.0f}", fontsize=8, ha='center', va='bottom', color="orange")
 
-    # 4. Model forecast (future)
+    # 4. Forecast (future)
     ax.plot(model_future.index, model_future.values, color="green", linestyle="--", marker="x", label="Model Forecast (Future)")
     for x, y in zip(model_future.index, model_future.values):
         ax.text(x, y, f"{y:.0f}", fontsize=8, ha='center', va='bottom', color="green")
 
-    # Axis styling
-    ax.set_ylabel("Sales")
-    ax.set_xlabel("Date")
-    ax.set_title(f"{selected_machine} Sales Forecast - {freq}")
+    # Styling
+    ax.set_title(f"{selected_machine} Sales Forecast - {freq}", fontsize=18)
+    ax.set_ylabel("Sales", fontsize=14)
+    ax.set_xlabel("Date", fontsize=14)
+    ax.tick_params(axis='both', labelsize=12)
+    ax.grid(True)
 
-    # ✅ Format x-axis as months like Nov, Dec, etc.
+    # Date format
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%b'))
     ax.xaxis.set_major_locator(mdates.MonthLocator())
     fig.autofmt_xdate()
 
-    # ✅ Move legend outside the chart
-    ax.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+    # Legend outside right
+    ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
     st.pyplot(fig)
 
-    # Download CSV
+    # Download
     st.download_button(
         label="📥 Download Prophet Forecast CSV",
         data=forecast_series.to_csv().encode(),
