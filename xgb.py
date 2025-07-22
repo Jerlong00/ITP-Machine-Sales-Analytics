@@ -22,9 +22,11 @@ if uploaded_file:
         df = pd.read_csv(uploaded_file) if filename.endswith(".csv") else pd.read_excel(uploaded_file)
         df.columns = df.columns.astype(str).str.strip().str.replace('\xa0', '').str.replace(':', ':')
 
-        df['saleDate'] = pd.to_datetime(df['saleDate'])
+        # --- Parse & clean date ---
+        df['saleDate'] = pd.to_datetime(df['saleDate'], errors='coerce')
         df = df.dropna(subset=['saleDate'])
 
+        # --- Static holidays list (can later externalize) ---
         public_holidays = pd.to_datetime([
             "2023-01-01", "2023-01-02", "2023-01-22", "2023-01-23", "2023-01-24",
             "2023-04-07", "2023-04-22", "2023-05-01", "2023-06-02", "2023-06-29",
@@ -37,113 +39,169 @@ if uploaded_file:
 
         if 'locationId' in df.columns and 'Qty' in df.columns:
             machines = df['locationId'].unique().tolist()
-            selected_machine = st.selectbox("\U0001F6E0 Select machine to forecast:", machines)
+            selected_machine = st.selectbox("🔧 Select machine to forecast:", machines)
 
-            freq = st.selectbox("\U0001F4CA Forecast Frequency:", ["Daily", "Weekly", "Monthly"])
+            freq = st.selectbox("📊 Forecast Frequency:", ["Daily", "Weekly", "Monthly"])
             freq_map = {"Daily": "D", "Weekly": "W", "Monthly": "M"}
             selected_freq = freq_map[freq]
 
-            forecast_steps = st.slider("⏱️ Forecast Steps (Periods)", 2, 60, 14)
+            forecast_steps = st.slider("⏱️ Forecast Steps (Future Periods)", 2, 60, 14)
 
+            # --- Filter for selected machine & resample ---
             df_machine = df[df['locationId'] == selected_machine].copy()
             df_machine.set_index('saleDate', inplace=True)
             df_machine = df_machine.sort_index()
 
-            df_daily = df_machine['Qty'].resample('D').sum().reset_index()
-            df_daily.rename(columns={'saleDate': 'ds', 'Qty': 'y'}, inplace=True)
+            df_resampled = df_machine['Qty'].resample(selected_freq).sum().reset_index()
+            df_resampled.rename(columns={'saleDate': 'ds', 'Qty': 'y'}, inplace=True)
 
-            df_daily['day_of_week'] = df_daily['ds'].dt.dayofweek
-            df_daily['is_weekend'] = df_daily['day_of_week'].isin([5, 6]).astype(int)
-            df_daily['month'] = df_daily['ds'].dt.month
-            df_daily['is_holiday'] = df_daily['ds'].isin(public_holidays).astype(int)
+            # --- Feature engineering ---
+            df_resampled['day_of_week'] = df_resampled['ds'].dt.dayofweek
+            df_resampled['is_weekend'] = df_resampled['day_of_week'].isin([5, 6]).astype(int)
+            df_resampled['month'] = df_resampled['ds'].dt.month
+            df_resampled['is_holiday'] = df_resampled['ds'].isin(public_holidays).astype(int)
 
-            df_daily['lag_1'] = df_daily['y'].shift(1)
-            df_daily['lag_7'] = df_daily['y'].shift(7)
-            df_daily['lag_14'] = df_daily['y'].shift(14)
-            df_daily = df_daily.dropna()
+            # Lags
+            df_resampled['lag_1'] = df_resampled['y'].shift(1)
+            df_resampled['lag_2'] = df_resampled['y'].shift(2)
+            df_resampled['lag_3'] = df_resampled['y'].shift(3)
+            df_resampled = df_resampled.dropna().reset_index(drop=True)
 
-            features = ['day_of_week', 'is_weekend', 'month', 'is_holiday', 'lag_1', 'lag_7', 'lag_14']
-            X = df_daily[features]
-            y = df_daily['y']
+            total_periods = len(df_resampled)
+            if total_periods < 5:
+                st.warning("Not enough periods after lag creation. Provide more data.")
+                st.stop()
 
-            model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100, random_state=42)
-            model.fit(X, y)
+            # --- Train/Test split (last forecast_steps periods for test) ---
+            train_size = total_periods - forecast_steps
+            if train_size <= 0:
+                st.warning("Not enough data for the selected Forecast Steps.")
+                st.stop()
 
-            # Use the last 'forecast_steps' rows to compute last week forecast
-            X_test = X.iloc[-forecast_steps:]
-            y_test = y.iloc[-forecast_steps:]
+            df_train = df_resampled.iloc[:train_size].copy()
+            df_test = df_resampled.iloc[train_size:].copy()
+
+            features = ['day_of_week', 'is_weekend', 'month', 'is_holiday', 'lag_1', 'lag_2', 'lag_3']
+            X_train, y_train = df_train[features], df_train['y']
+            X_test, y_test = df_test[features], df_test['y']
+
+            # --- Model training ---
+            model = xgb.XGBRegressor(
+                objective='reg:squarederror',
+                n_estimators=100,
+                random_state=42
+            )
+            model.fit(X_train, y_train)
+
+            # --- Test predictions ---
             y_pred_test = model.predict(X_test)
+            df_last_week = pd.DataFrame({
+                'ds': df_test['ds'],
+                'Actual': y_test.values,
+                'Predicted': y_pred_test
+            }).set_index('ds')
 
-            # Append predictions to forecast_input for consistency in future forecasting
-            forecast_input = df_daily.copy()
-            last_known_date = forecast_input['ds'].iloc[-1]
-            for i in range(forecast_steps):
-                forecast_input = pd.concat([forecast_input, pd.DataFrame({
-                    'ds': [X_test.index[i]],
-                    'y': [y_pred_test[i]]
-                })], ignore_index=True)
+            # --- Metrics ---
+            mae = mean_absolute_error(df_last_week['Actual'], df_last_week['Predicted'])
+            rmse = mean_squared_error(df_last_week['Actual'], df_last_week['Predicted']) ** 0.5
+            mape = np.mean(
+                np.abs((df_last_week['Actual'] - df_last_week['Predicted']) /
+                       df_last_week['Actual'].replace(0, np.nan))
+            ) * 100
+            if np.isnan(mape):
+                mape = 0.0
 
-            # Forecast future based on those appended rows
-            future_dates = pd.date_range(start=last_known_date + pd.Timedelta(days=1), periods=forecast_steps, freq='D')
+            rolling_change = np.mean(np.abs(df_resampled['y'].diff(1)))
+
+            st.subheader("📈 XGBoost Accuracy Metrics")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("MAE", f"{mae:.2f}")
+            c2.metric("RMSE", f"{rmse:.2f}")
+            c3.metric("MAPE", f"{mape:.2f}%")
+            c4.metric("Rolling Change", f"{rolling_change:.2f}")
+
+            # --- Future forecasting ---
+            forecast_input_for_future = df_resampled.copy()
+            last_known_date = forecast_input_for_future['ds'].iloc[-1]
+            future_dates = pd.date_range(
+                start=last_known_date + pd.tseries.frequencies.to_offset(selected_freq),
+                periods=forecast_steps,
+                freq=selected_freq
+            )
+
             forecast_list = []
             for date in future_dates:
-                features_dict = {
+                feat_dict = {
                     'day_of_week': date.dayofweek,
                     'is_weekend': int(date.dayofweek in [5, 6]),
                     'month': date.month,
                     'is_holiday': int(date in public_holidays),
-                    'lag_1': forecast_input['y'].iloc[-1],
-                    'lag_7': forecast_input['y'].iloc[-7] if len(forecast_input) >= 7 else forecast_input['y'].mean(),
-                    'lag_14': forecast_input['y'].iloc[-14] if len(forecast_input) >= 14 else forecast_input['y'].mean()
+                    'lag_1': forecast_input_for_future['y'].iloc[-1],
+                    'lag_2': forecast_input_for_future['y'].iloc[-2] if len(forecast_input_for_future) >= 2 else forecast_input_for_future['y'].mean(),
+                    'lag_3': forecast_input_for_future['y'].iloc[-3] if len(forecast_input_for_future) >= 3 else forecast_input_for_future['y'].mean()
                 }
-                X_pred = pd.DataFrame([features_dict])
-                y_pred = model.predict(X_pred)[0]
-                forecast_list.append({'ds': date, 'Forecast': y_pred})
-                forecast_input = pd.concat([forecast_input, pd.DataFrame({'ds': [date], 'y': [y_pred]})], ignore_index=True)
+                X_future = pd.DataFrame([feat_dict])
+                y_future = model.predict(X_future)[0]
+                forecast_list.append({'ds': date, 'Forecast': y_future})
+                # append for rolling lags
+                forecast_input_for_future = pd.concat(
+                    [forecast_input_for_future, pd.DataFrame({'ds': [date], 'y': [y_future]})],
+                    ignore_index=True
+                )
 
             df_pred = pd.DataFrame(forecast_list).set_index('ds')
-            df_pred.index = pd.to_datetime(df_pred.index)
-            df_pred = df_pred.resample(selected_freq).sum()
 
-            df_recent = df_daily.set_index('ds')
-            df_recent = df_recent[df_recent.index >= df_recent.index.max() - pd.Timedelta(days=30)]
-            df_recent_resampled = df_recent.resample(selected_freq).sum()
+            # --- NEW: History window slider (limits *historical* display) ---
+            unit_label = {"D": "day", "W": "week", "M": "month"}[selected_freq]
+            max_history = len(df_resampled)  # total actual periods
+            default_show = min(30, max_history)  # you can change default
+            history_window = st.slider(
+                f"🗂️ Display last N {unit_label}s of history",
+                min_value=2,
+                max_value=max_history,
+                value=default_show
+            )
 
-            df_last_week = pd.DataFrame({
-                'ds': df_daily['ds'].iloc[-forecast_steps:],
-                'Actual': y_test.values,
-                'Predicted': y_pred_test
-            })
-            df_last_week.set_index('ds', inplace=True)
-            df_last_week.index = pd.to_datetime(df_last_week.index)
-            df_last_week_resampled = df_last_week.resample(selected_freq).sum()
+            cutoff_date = df_resampled['ds'].iloc[-history_window]
 
-            mae = mean_absolute_error(y_test, y_pred_test)
-            rmse = mean_squared_error(y_test, y_pred_test) ** 0.5
-            mape = np.mean(np.abs((y_test - y_pred_test) / y_test.replace(0, np.nan))) * 100
-            rolling_mae = np.mean(np.abs(df_daily['y'].diff(periods=7)))
+            # Filter historical data for plotting only
+            df_train_plot = df_train[df_train['ds'] >= cutoff_date]
+            df_test_plot = df_test[df_test['ds'] >= cutoff_date]
+            df_last_week_plot = df_last_week[df_last_week.index >= cutoff_date]
 
-            st.subheader("\U0001F4CA XGBoost Accuracy Metrics")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("MAE", f"{mae:.2f}")
-            col2.metric("RMSE", f"{rmse:.2f}")
-            col3.metric("MAPE", f"{mape:.2f}%")
-            col4.metric("Rolling MAE (7d)", f"{rolling_mae:.2f}")
-
-            st.subheader("\U0001F4C8 XGBoost Forecast")
+            st.subheader("📊 XGBoost Forecast")
             fig, ax = plt.subplots(figsize=(10, 4))
-            df_recent_resampled['y'].plot(ax=ax, label='Past 1 Month', marker='o', color='blue')
-            df_last_week_resampled['Predicted'].plot(ax=ax, label='Forecast (last week)', linestyle='--', marker='x', color='orange')
-            df_pred['Forecast'].plot(ax=ax, label='Forecast (future)', linestyle='--', marker='x', color='green')
+
+            # Training actuals (visible window)
+            if not df_train_plot.empty:
+                df_train_plot.set_index('ds')['y'].plot(ax=ax, label='Training Actuals', marker='o', color='blue')
+
+            # Test actuals (visible window)
+            if not df_test_plot.empty:
+                df_test_plot.set_index('ds')['y'].plot(ax=ax, label='Test Actuals', marker='o', color='purple')
+
+            # Test predictions (visible window)
+            if not df_last_week_plot.empty:
+                df_last_week_plot['Predicted'].plot(ax=ax, label='Test Predictions', linestyle='--', marker='x', color='orange')
+
+            # Future forecast (always shown)
+            df_pred['Forecast'].plot(ax=ax, label='Future Forecast', linestyle='--', marker='x', color='green')
+
+            ax.set_xlabel("ds")
+            ax.set_ylabel("Qty")
             ax.legend()
             st.pyplot(fig)
 
+            # Download future forecast
             st.download_button(
-                label="\U0001F4C5 Download XGBoost Forecast CSV",
-                data=df_pred.to_csv().encode(),
+                label="📥 Download Forecast CSV",
+                data=df_pred.reset_index().to_csv(index=False).encode(),
                 file_name=f"{selected_machine}_{freq.lower()}_xgboost_forecast.csv",
                 mime="text/csv"
             )
+
+        else:
+            st.error("Required columns 'locationId' and 'Qty' not found in the uploaded file.")
 
     except Exception as e:
         st.error(f"❌ Error processing file: {e}")
