@@ -179,20 +179,36 @@ if uploaded_file:
             st.subheader("📊 XGBoost Forecast")
             fig, ax = plt.subplots(figsize=(10, 4))
 
-            # Training actuals (visible window)
+            # Training actuals
             if not df_train_plot.empty:
-                df_train_plot.set_index('ds')['y'].plot(ax=ax, label='Training Actuals', marker='o', color='blue')
+                y_vals = df_train_plot.set_index('ds')['y']
+                y_vals.plot(ax=ax, label='Training Actuals', marker='o', color='blue')
+                for x, y in y_vals.items():
+                    ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
+                                fontsize=8, color='blue')
 
-            # Test actuals (visible window)
+            # Test actuals
             if not df_test_plot.empty:
-                df_test_plot.set_index('ds')['y'].plot(ax=ax, label='Test Actuals', marker='o', color='purple')
+                y_vals = df_test_plot.set_index('ds')['y']
+                y_vals.plot(ax=ax, label='Test Actuals', marker='o', color='purple')
+                for x, y in y_vals.items():
+                    ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
+                                fontsize=8, color='purple')
 
-            # Test predictions (visible window)
+            # Test predictions
             if not df_last_week_plot.empty:
-                df_last_week_plot['Predicted'].plot(ax=ax, label='Test Predictions', linestyle='--', marker='x', color='orange')
+                y_vals = df_last_week_plot['Predicted']
+                y_vals.plot(ax=ax, label='Test Predictions', linestyle='--', marker='x', color='orange')
+                for x, y in y_vals.items():
+                    ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
+                                fontsize=8, color='orange')
 
-            # Future forecast (always shown)
-            df_pred['Forecast'].plot(ax=ax, label='Future Forecast', linestyle='--', marker='x', color='green')
+            # Future forecast
+            y_vals = df_pred['Forecast']
+            y_vals.plot(ax=ax, label='Future Forecast', linestyle='--', marker='x', color='green')
+            for x, y in y_vals.items():
+                ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
+                            fontsize=8, color='green')
 
             ax.set_xlabel("ds")
             ax.set_ylabel("Qty")
