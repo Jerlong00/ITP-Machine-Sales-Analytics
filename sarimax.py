@@ -36,7 +36,7 @@ if uploaded_file:
     freq = st.selectbox("📊 Forecast Frequency:", ["Daily", "Weekly", "Monthly"])
     freq_map = {"Daily": "D", "Weekly": "W", "Monthly": "M"}
     seasonal_m_map = {"Daily": 30, "Weekly": 8, "Monthly": 3}
-    max_steps_map = {"Daily": 90, "Weekly": 12, "Monthly": 3}  # Max 3 months for each
+    max_steps_map = {"Daily": 90, "Weekly": 12, "Monthly": 3}
     selected_freq = freq_map[freq]
     seasonal_m = seasonal_m_map[freq]
     max_forecast_steps = max_steps_map[freq]
@@ -120,7 +120,7 @@ if uploaded_file:
         if df_display["cleaned_filled"].dropna().empty:
             st.warning("⚠️ No recent historical data.")
         else:
-            fig, ax = plt.subplots(figsize=(8, 4))
+            fig, ax = plt.subplots(figsize=(12, 5))
             train_data = df_display["cleaned_filled"].iloc[:-forecast_steps].copy()
             test_data = df_display["cleaned_filled"].iloc[-forecast_steps:].copy()
             test_pred_index = test_data.index
@@ -152,7 +152,7 @@ if uploaded_file:
                 ax.set_ylabel("Sales", fontsize=14)
                 ax.set_xlabel("Date", fontsize=14)
                 ax.tick_params(axis='both', labelsize=12)
-                ax.legend()
+                ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
                 ax.grid(True)
 
                 st.pyplot(fig)
