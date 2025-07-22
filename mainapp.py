@@ -1,24 +1,18 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+from prophet import Prophet
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from scipy.stats import zscore, boxcox
 from scipy.special import inv_boxcox
 import numpy as np
 import os
+import warnings
 
-#✅ Outlier smoothing
+from prophet.plot import plot_components
 
-#✅ Box-Cox toggle
-
-#✅ Seasonal period logic
-
-#✅ Forecast accuracy metrics
-
-#✅ Rolling MAE
-
-#✅ Smart frequency resampling
+warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="AI Sales Forecasting", layout="wide")
 st.title("📈 AI Sales Forecasting App (Multi-Frequency)")
@@ -71,6 +65,7 @@ if uploaded_file:
         selected_freq = freq_map[freq]
 
         if "locationId" in df.columns and "Qty" in df.columns:
+            df = df[df["Qty"] > 0]  # ✅ Filter out zero or negative Qty before pivoting
             df_pivoted = df.pivot_table(index=df.index, columns="locationId", values="Qty", aggfunc="sum")
             machine_cols = df_pivoted.columns.astype(str).tolist()
             selected_machine = st.selectbox("🛠 Select machine to forecast:", machine_cols)
@@ -107,44 +102,85 @@ if uploaded_file:
             2, step_defaults[freq]*2, step_defaults[freq]
         )
 
+        # ✅ Model selection
+        model_choice = st.radio("🧠 Select Forecasting Model:", ["SARIMAX", "Prophet"])
+
         seasonal_periods = {"D": 7, "W": 52, "M": 12, "Q": 4, "2Q": 2, "Y": 1}
         seasonal_m = seasonal_periods[selected_freq]
 
-        train = series_to_use.iloc[:-forecast_steps]
-        test = df_resampled[selected_machine].iloc[-forecast_steps:]
+        if model_choice == "SARIMAX":
+            train = series_to_use.iloc[:-forecast_steps]
+            test = df_resampled[selected_machine].iloc[-forecast_steps:]
 
-        model = SARIMAX(train, order=(1,1,1), seasonal_order=(1,1,1,seasonal_m))
-        results = model.fit(disp=False)
+        # ✅ Forecast logic
+        if model_choice == "SARIMAX":
+            model = SARIMAX(train, order=(1,1,1), seasonal_order=(1,1,1,seasonal_m))
+            results = model.fit(disp=False)
+            predicted = results.forecast(steps=forecast_steps)
 
-        predicted = results.forecast(steps=forecast_steps)
-        if use_boxcox:
-            predicted = inv_boxcox(predicted, lam)
+            if use_boxcox:
+                predicted = inv_boxcox(predicted, lam)
 
+            predicted = pd.Series(predicted, index=test.index)
+
+        else:
+            prophet_df = df_resampled.reset_index()[[selected_date_col, selected_machine]].rename(columns={
+                selected_date_col: "ds",
+                selected_machine: "y"
+            })
+
+            if use_boxcox:
+                prophet_df["y"] = boxcox(prophet_df["y"].replace(0, 0.01), lmbda=lam)[0]
+
+            m = Prophet()
+            m.fit(prophet_df)
+
+            future = m.make_future_dataframe(periods=forecast_steps, freq=selected_freq)
+            forecast = m.predict(future)
+
+            predicted = forecast.set_index("ds")["yhat"].iloc[-forecast_steps:]
+
+            if use_boxcox:
+                predicted = inv_boxcox(predicted, lam)
+
+            prophet_model = m
+            prophet_forecast = forecast
+
+        # ✅ Forecast Accuracy Metrics
         actual = test
+        non_zero_actual = actual.replace(0, np.nan)
         rmse = mean_squared_error(actual, predicted) ** 0.5
         mae = mean_absolute_error(actual, predicted)
-        mape = np.mean(np.abs((actual - predicted) / actual.replace(0, np.nan))) * 100
+        mape = np.mean(np.abs((actual - predicted) / non_zero_actual)) * 100
         rolling_mae = np.mean(np.abs(df_resampled[selected_machine].diff()))
 
-        st.subheader("📊 Forecast Accuracy Metrics")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("MAE", f"{mae:.2f}")
-        col2.metric("RMSE", f"{rmse:.2f}")
-        col3.metric("MAPE", f"{mape:.2f}%")
-        col4.metric("Rolling MAE", f"{rolling_mae:.2f}")
+            st.subheader("📊 Forecast Accuracy Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("MAE", f"{mae:.2f}")
+            col2.metric("RMSE", f"{rmse:.2f}")
+            col3.metric("MAPE", f"{mape:.2f}%")
+            col4.metric("Rolling MAE", f"{rolling_mae:.2f}")
 
+        # ✅ Forecast Plot
         st.subheader("📈 Forecast vs Historical")
         fig2, ax2 = plt.subplots()
-        df_resampled[selected_machine].plot(ax=ax2, label="Historical")
-        pd.Series(predicted, index=test.index).plot(ax=ax2, label="Forecast", linestyle="--")
+        predicted.plot(ax=ax2, label="Forecast", linestyle="--", linewidth=2)
         ax2.set_ylabel("Sales")
+        ax2.set_title(f"{selected_machine} Forecast Only ({model_choice})")
         ax2.legend()
         st.pyplot(fig2)
 
+        # ✅ Prophet component breakdown
+        if model_choice == "Prophet":
+            st.subheader("🧠 Prophet Component Breakdown")
+            fig3 = plot_components(prophet_model, prophet_forecast)
+            st.pyplot(fig3)
+
+        # ✅ Download forecast
         st.download_button(
             label="📥 Download Forecast CSV",
             data=pd.Series(predicted, index=test.index).to_csv().encode(),
-            file_name=f"{selected_machine}_{freq.lower()}_forecast.csv",
+            file_name=f"{selected_machine}_{freq.lower()}_{model_choice.lower()}_forecast.csv",
             mime="text/csv"
         )
 
