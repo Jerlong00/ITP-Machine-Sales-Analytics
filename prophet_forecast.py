@@ -81,7 +81,6 @@ def run_prophet_forecast(
     c1.metric("MAE", f"{mae:.2f}")
     c2.metric("RMSE", f"{rmse:.2f}")
     c3.metric("MAPE", f"{mape:.2f}%" if not np.isnan(mape) else "N/A")
-    st.caption(f"⚠️ Forecast clipped to 0 - {y_cap:.1f} range for stability.")
 
     st.subheader("🔎 Display Settings")
     max_periods = len(df_resampled)
