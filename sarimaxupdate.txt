@@ -70,4 +70,84 @@ Dual-line chart: historical + forecast
 
 Forecast is plotted with a dashed line
 
-CSV export button with filename auto-tagged by machine + frequency
+CSV export button with filename auto-tagged by machine + frequency'
+
+Version 1.2
+
+✅ 1. Outlier Smoothing via Z-Score
+What it does:
+Detects extreme spikes in sales using the Z-score method (threshold of ±3) and temporarily nulls them out. Those gaps are then filled using linear interpolation.
+
+Why it matters:
+Prevents one-off events or recording errors from distorting the SARIMAX forecast.
+
+✅ 2. Missing Value Interpolation
+What it does:
+Backfills missing data using previous available values (bfill) and uses interpolation after removing outliers.
+
+Why it matters:
+Time series forecasting hates missing data. This ensures continuity while still respecting historical patterns.
+
+✅ 3. Dynamic Seasonal Period Setting
+What it does:
+Customizes SARIMAX's seasonal period (`m` parameter) based on the selected frequency:
+
+Daily → 30  
+Weekly → 8  
+Monthly → 3
+
+Why it matters:
+Reduces training time while maintaining useful periodicity. Prevents overfitting with shorter but meaningful seasonal cycles.
+
+✅ 4. Forecast Limits
+What it does:
+Restricts maximum forecast window to roughly 3 months of forward predictions based on frequency:
+
+- Daily → max 90 days  
+- Weekly → max 12 weeks  
+- Monthly → max 3 months
+
+Why it matters:
+Keeps forecasts practical and manageable for short-term decision-making.
+
+✅ 5. Forecast Accuracy Metrics (Revamped Display)
+What it does:
+Displays four key metrics in a single horizontal row across full width:
+- MAE (Mean Absolute Error)
+- RMSE (Root Mean Squared Error)
+- MAPE (Mean Absolute Percentage Error)
+- Rolling Change (average percentage change between periods)
+
+Why it matters:
+Cleaner UI and clearer benchmarking of model performance.
+
+✅ 6. Improved Forecast Chart
+What it does:
+Adds numeric data labels on top of each point (train, test, and forecast) with enlarged fonts for readability.
+
+Why it matters:
+Makes individual point comparisons easier during presentations or debugging.
+
+✅ 7. A1 Machine Default
+What it does:
+Sorts all available machines alphabetically and auto-selects the first (e.g., A1).
+
+Why it matters:
+Ensures a consistent entry point for new users or when testing multiple models.
+
+✅ 8. Streamlined Model Parameters
+What it does:
+SARIMAX is now initialized with:
+- (1, 0, 0) non-seasonal order
+- (1, 1, 1, m) seasonal order, based on frequency
+
+Why it matters:
+Stable baseline configuration suitable for most vending machine sales data.
+
+✅ 9. CSV Export with Naming
+What it does:
+Exports the forecast with filename formatted as:
+`[machineID]_[frequency]_sarimax_forecast.csv`
+
+Why it matters:
+Helpful for organizing exports when analyzing many locations or periods.
