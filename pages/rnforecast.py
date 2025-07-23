@@ -7,12 +7,11 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 st.set_page_config(page_title="Rolling Naive Forecast", layout="wide")
 st.title("🌀 Rolling Naive Forecast (Daily / Weekly / Biweekly / Monthly)")
 
-uploaded_file = st.file_uploader("📤 Upload Excel or CSV File", type=["xlsx", "xls", "csv"])
+# ✅ Access shared file from session
+df = st.session_state.get("df")
 
-if uploaded_file:
+if df is not None:
     try:
-        filename = uploaded_file.name.lower()
-        df = pd.read_csv(uploaded_file) if filename.endswith(".csv") else pd.read_excel(uploaded_file)
         df.columns = df.columns.astype(str).str.strip()
         df['saleDate'] = pd.to_datetime(df['saleDate'], errors='coerce')
         df = df.dropna(subset=['saleDate'])
@@ -25,11 +24,10 @@ if uploaded_file:
         machines = df['locationId'].unique().tolist()
         selected_machine = st.selectbox("🔧 Select Machine", machines)
 
-        freq_choice = st.selectbox("📊 Forecast Frequency", ["Daily", "Weekly", "Biweekly", "Monthly"])
+        freq_choice = st.selectbox("📊 Forecast Frequency", ["Daily", "Weekly", "Monthly"])
         freq_map = {
             "Daily": "D",
             "Weekly": "W",
-            "Biweekly": "2W",
             "Monthly": "M"
         }
         selected_freq = freq_map[freq_choice]
@@ -72,40 +70,34 @@ if uploaded_file:
         col3.metric("MAPE", f"{mape:.2f}%")
         col4.metric("Rolling MAE (Train)", f"{rolling_mae:.2f}")
 
-        # Chart window: 1 month before + forecast steps
+        # Chart window
         cutoff_date = pd.to_datetime("2024-12-01")
         forecast_end = df_eval['ds'].iloc[-1]
-        df_plot = df_resampled[
-            (df_resampled['ds'] >= cutoff_date) &
-            (df_resampled['ds'] <= forecast_end)
-        ].copy()
-
-        # Hide forecast before 2025
+        df_plot = df_resampled[(df_resampled['ds'] >= cutoff_date) & (df_resampled['ds'] <= forecast_end)].copy()
         df_plot.loc[df_plot['ds'] < forecast_start, 'y_pred'] = np.nan
 
-        # Plot
+        # Forecast chart
         st.subheader("📊 Forecast Chart")
-        fig, ax = plt.subplots(figsize=(10, 4))
-        # Plot lines
+        fig, ax = plt.subplots(figsize=(12, 5))
+
         df_plot.set_index('ds')['y'].plot(ax=ax, label='Actual', marker='o', color='blue')
         df_plot.set_index('ds')['y_pred'].plot(ax=ax, label='Naive Forecast', linestyle='--', marker='x', color='orange')
 
-        # Add value labels
         for x, y in zip(df_plot['ds'], df_plot['y']):
             if pd.notna(y):
-                ax.annotate(f"{y:.0f}", (x, y), textcoords="offset points", xytext=(0, 5), ha='center', fontsize=8, color='blue')
-
+                ax.text(x, y + 0.5, f"{y:.0f}", color='blue', fontsize=9, ha='center')
         for x, y_pred in zip(df_plot['ds'], df_plot['y_pred']):
             if pd.notna(y_pred):
-                ax.annotate(f"{y_pred:.0f}", (x, y_pred), textcoords="offset points", xytext=(0, -10), ha='center', fontsize=8, color='orange')
+                ax.text(x, y_pred + 0.5, f"{y_pred:.0f}", color='orange', fontsize=9, ha='center')
 
-        # Reference line and legend
         ax.axvline(x=forecast_start, linestyle='--', color='gray', label="Forecast Start")
-        ax.set_title(f"Rolling Naive Backtest ({forecast_steps} Days) — {selected_machine}")
-        ax.set_ylabel("Qty")
-        ax.legend()
+        ax.set_title(f"Rolling Naive Backtest ({forecast_steps} Steps) — {selected_machine}", fontsize=18)
+        ax.set_ylabel("Qty", fontsize=14)
+        ax.set_xlabel("Date", fontsize=14)
+        ax.tick_params(axis='both', labelsize=12)
+        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
+        ax.grid(True)
         st.pyplot(fig)
-
 
         # CSV download
         df_download = df_eval[['ds', 'y', 'y_pred']].rename(columns={'y': 'Actual', 'y_pred': 'Forecast'})
@@ -118,5 +110,5 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
-
-
+else:
+    st.warning("⚠️ No uploaded file found in session. Please upload your data on the main page.")

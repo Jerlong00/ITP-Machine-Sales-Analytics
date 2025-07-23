@@ -1,5 +1,3 @@
-# AI Sales Forecasting App (Streamlit + SARIMAX)
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -10,19 +8,13 @@ from scipy.stats import zscore
 import warnings
 
 st.set_page_config(page_title="AI Sales Forecasting", layout="wide")
-st.title("📈 AI Sales Forecasting App")
-st.markdown("✅ Upload your Excel or CSV file with machine sales data.")
+st.title("📈 AI Sales Forecasting App (SARIMAX)")
 
-uploaded_file = st.file_uploader("📤 Upload Excel or CSV File", type=["xlsx", "xls", "csv"])
+# ✅ Use shared dataframe from session
+df = st.session_state.get("df")
 
-if uploaded_file:
-    filename = uploaded_file.name.lower()
-    df = pd.read_csv(uploaded_file) if filename.endswith(".csv") else pd.read_excel(uploaded_file)
-    df.columns = df.columns.astype(str).str.strip().str.replace('\xa0', '').str.replace(':', ':')
-
-    st.write("📋 Columns found:")
-    st.write(df.columns.tolist())
-
+if df is not None:
+    df = df.copy()
     date_column_candidates = [col for col in df.columns if 'date' in col.lower()]
     if not date_column_candidates:
         st.warning("⚠️ No 'date' column found. Defaulting to first column.")
@@ -116,65 +108,53 @@ if uploaded_file:
         forecast_df = forecast.predicted_mean.rename("Forecast").clip(lower=0.01)
         forecast_df.index.freq = selected_freq
 
-        st.subheader(f"📉 {selected_machine} Sales Forecast ({freq} - Next {forecast_steps} period(s))")
-        if df_display["cleaned_filled"].dropna().empty:
-            st.warning("⚠️ No recent historical data.")
-        else:
-            fig, ax = plt.subplots(figsize=(12, 5))
+        if not forecast_df.isna().all():
             train_data = df_display["cleaned_filled"].iloc[:-forecast_steps].copy()
             test_data = df_display["cleaned_filled"].iloc[-forecast_steps:].copy()
-            test_pred_index = test_data.index
+            test_predictions = results.get_prediction(
+                start=test_data.index[0],
+                end=test_data.index[-1],
+                exog=exog[-forecast_steps:]
+            ).predicted_mean
 
-            try:
-                test_predictions = results.get_prediction(
-                    start=test_pred_index[0],
-                    end=test_pred_index[-1],
-                    exog=exog[-forecast_steps:]
-                ).predicted_mean
+            mae = mean_absolute_error(test_data, test_predictions)
+            rmse = mean_squared_error(test_data, test_predictions) ** 0.5
+            mape = np.mean(np.abs((test_data - test_predictions) / test_data.replace(0, np.nan))) * 100
+            rolling_change = test_data.pct_change().mean() * 100
 
-                train_data.plot(ax=ax, label="Historical Training Data", color="blue", marker='o')
-                test_data.plot(ax=ax, label="Validation Actuals", color="purple", marker='o')
-                if not test_predictions.isna().all():
-                    test_predictions.plot(ax=ax, label="Model Predictions (Test)", color="orange", linestyle="--", marker='x')
-                if not forecast_df.isna().all():
-                    forecast_df.plot(ax=ax, label="Model Forecast (Future)", color="green", linestyle="--", marker='x')
+            st.subheader("📊 SARIMAX Accuracy Metrics")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("MAE", f"{mae:.2f}")
+            c2.metric("RMSE", f"{rmse:.2f}")
+            c3.metric("MAPE", f"{mape:.2f}%")
+            c4.metric("Rolling Change", f"{rolling_change:.2f}%")
 
-                for x, y in train_data.items():
-                    ax.text(x, y + 0.5, f"{y:.0f}", color='blue', fontsize=9, ha='center')
-                for x, y in test_data.items():
-                    ax.text(x, y + 0.5, f"{y:.0f}", color='purple', fontsize=9, ha='center')
-                for x, y in test_predictions.items():
-                    ax.text(x, y + 0.5, f"{y:.0f}", color='orange', fontsize=9, ha='center')
-                for x, y in forecast_df.items():
-                    ax.text(x, y + 0.5, f"{y:.0f}", color='green', fontsize=9, ha='center')
+        st.subheader(f"📉 {selected_machine} Sales Forecast ({freq} - Next {forecast_steps} period(s))")
+        fig, ax = plt.subplots(figsize=(12, 5))
+        train_data.plot(ax=ax, label="Historical Training Data", color="blue", marker='o')
+        test_data.plot(ax=ax, label="Validation Actuals", color="purple", marker='o')
+        if not test_predictions.isna().all():
+            test_predictions.plot(ax=ax, label="Model Predictions (Test)", color="orange", linestyle="--", marker='x')
+        if not forecast_df.isna().all():
+            forecast_df.plot(ax=ax, label="Model Forecast (Future)", color="green", linestyle="--", marker='x')
 
-                ax.set_title(f"{selected_machine} Sales Forecast - {freq}", fontsize=18)
-                ax.set_ylabel("Sales", fontsize=14)
-                ax.set_xlabel("Date", fontsize=14)
-                ax.tick_params(axis='both', labelsize=12)
-                ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
-                ax.grid(True)
+        for x, y in train_data.items():
+            ax.text(x, y + 0.5, f"{y:.0f}", color='blue', fontsize=9, ha='center')
+        for x, y in test_data.items():
+            ax.text(x, y + 0.5, f"{y:.0f}", color='purple', fontsize=9, ha='center')
+        for x, y in test_predictions.items():
+            ax.text(x, y + 0.5, f"{y:.0f}", color='orange', fontsize=9, ha='center')
+        for x, y in forecast_df.items():
+            ax.text(x, y + 0.5, f"{y:.0f}", color='green', fontsize=9, ha='center')
 
-                st.pyplot(fig)
+        ax.set_title(f"{selected_machine} Sales Forecast - {freq}", fontsize=18)
+        ax.set_ylabel("Sales", fontsize=14)
+        ax.set_xlabel("Date", fontsize=14)
+        ax.tick_params(axis='both', labelsize=12)
+        ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
+        ax.grid(True)
 
-                if not test_predictions.isna().all() and not test_data.isna().all():
-                    mae = mean_absolute_error(test_data, test_predictions)
-                    rmse = mean_squared_error(test_data, test_predictions) ** 0.5
-                    mape = np.mean(np.abs((test_data - test_predictions) / test_data.replace(0, np.nan))) * 100
-                    rolling_change = test_data.pct_change().mean() * 100
-
-                    st.markdown("### 📊 Forecast Accuracy Metrics")
-                    st.markdown(f"""
-                    <div style='display: flex; justify-content: space-between; align-items: center; width: 100%; font-size: 16px; padding: 10px 0;'>
-                        <div><strong>MAE:</strong> {mae:.2f}</div>
-                        <div><strong>RMSE:</strong> {rmse:.2f}</div>
-                        <div><strong>MAPE:</strong> {mape:.2f}%</div>
-                        <div><strong>Rolling Change:</strong> {rolling_change:.2f}%</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            except Exception as e:
-                st.error(f"Error generating predictions or metrics: {e}")
+        st.pyplot(fig)
 
         st.download_button(
             label="📅 Download Forecast CSV",
@@ -182,6 +162,7 @@ if uploaded_file:
             file_name=f"{selected_machine}_{freq.lower()}_sarimax_forecast.csv",
             mime="text/csv"
         )
-
     else:
         st.error("❌ Your file must contain 'locationId' and 'Qty' columns.")
+else:
+    st.warning("⚠️ Please upload a file in the Home tab.")

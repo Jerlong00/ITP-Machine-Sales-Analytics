@@ -9,17 +9,57 @@ import numpy as np
 import os
 import xgboost as xgb
 
+def plot_xgb_forecast_chart(
+    df_train_plot, df_test_plot, df_last_week_plot, df_pred, selected_machine, selected_freq
+):
+    fig, ax = plt.subplots(figsize=(12, 5))
+
+    # Training actuals
+    if not df_train_plot.empty:
+        y_vals = df_train_plot.set_index('ds')['y']
+        y_vals.plot(ax=ax, label='Historical Training Data', color='blue', marker='o')
+        for x, y in y_vals.items():
+            ax.text(x, y + 0.5, f'{y:.0f}', color='blue', fontsize=9, ha='center')
+
+    # Test actuals
+    if not df_test_plot.empty:
+        y_vals = df_test_plot.set_index('ds')['y']
+        y_vals.plot(ax=ax, label='Validation Actuals', color='purple', marker='o')
+        for x, y in y_vals.items():
+            ax.text(x, y + 0.5, f'{y:.0f}', color='purple', fontsize=9, ha='center')
+
+    # Test predictions
+    if not df_last_week_plot.empty:
+        y_vals = df_last_week_plot['Predicted']
+        y_vals.plot(ax=ax, label='Model Predictions (Test)', linestyle='--', marker='x', color='orange')
+        for x, y in y_vals.items():
+            ax.text(x, y + 0.5, f'{y:.0f}', color='orange', fontsize=9, ha='center')
+
+    # Future forecast
+    if not df_pred.empty:
+        y_vals = df_pred['Forecast']
+        y_vals.plot(ax=ax, label='Model Forecast (Future)', linestyle='--', marker='x', color='green')
+        for x, y in y_vals.items():
+            ax.text(x, y + 0.5, f'{y:.0f}', color='green', fontsize=9, ha='center')
+
+    ax.set_title(f"{selected_machine} Sales Forecast - {selected_freq}", fontsize=18)
+    ax.set_ylabel("Sales", fontsize=14)
+    ax.set_xlabel("Date", fontsize=14)
+    ax.tick_params(axis='both', labelsize=12)
+    ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
+    ax.grid(True)
+
+    return fig
+
+# Setup
 st.set_page_config(page_title="AI Sales Forecasting", layout="wide")
-st.title("📈 AI Sales Forecasting App (Multi-Frequency)")
+st.title("📈 AI Sales Forecasting App (XGBoost Model)")
 
-st.markdown("✅ Upload your Excel or CSV file with machine sales data. Public holiday support coming soon!")
+# Get shared file
+df = st.session_state.get("df")
 
-uploaded_file = st.file_uploader("📤 Upload Excel or CSV File", type=["xlsx", "xls", "csv"], key="xgb_uploader")
-
-if uploaded_file:
+if df is not None:
     try:
-        filename = uploaded_file.name.lower()
-        df = pd.read_csv(uploaded_file) if filename.endswith(".csv") else pd.read_excel(uploaded_file)
         df.columns = df.columns.astype(str).str.strip().str.replace('\xa0', '').str.replace(':', ':')
 
         # --- Parse & clean date ---
@@ -28,21 +68,16 @@ if uploaded_file:
 
         # --- Static holidays list (can later externalize) ---
         public_holidays = pd.to_datetime([
-        # 2023
-        "2023-01-01", "2023-01-02", "2023-01-22", "2023-01-23", "2023-01-24",
-        "2023-04-07", "2023-04-22", "2023-05-01", "2023-06-02", "2023-06-29",
-        "2023-08-09", "2023-09-01", "2023-11-12", "2023-11-13", "2023-12-25",
-
-        # 2024
-        "2024-01-01", "2024-02-10", "2024-02-11", "2024-02-12", "2024-03-29",
-        "2024-04-10", "2024-05-01", "2024-05-22", "2024-06-17", "2024-08-09",
-        "2024-10-31", "2024-12-25",
-
-        # 2025
-        "2025-01-01", "2025-01-29", "2025-01-30", "2025-01-31", "2025-03-31",
-        "2025-04-18", "2025-05-01", "2025-05-03", "2025-05-05", "2025-05-12",
-        "2025-08-09", "2025-08-11", "2025-10-20", "2025-12-25"
-    ])
+            "2023-01-01", "2023-01-02", "2023-01-22", "2023-01-23", "2023-01-24",
+            "2023-04-07", "2023-04-22", "2023-05-01", "2023-06-02", "2023-06-29",
+            "2023-08-09", "2023-09-01", "2023-11-12", "2023-11-13", "2023-12-25",
+            "2024-01-01", "2024-02-10", "2024-02-11", "2024-02-12", "2024-03-29",
+            "2024-04-10", "2024-05-01", "2024-05-22", "2024-06-17", "2024-08-09",
+            "2024-10-31", "2024-12-25",
+            "2025-01-01", "2025-01-29", "2025-01-30", "2025-01-31", "2025-03-31",
+            "2025-04-18", "2025-05-01", "2025-05-03", "2025-05-05", "2025-05-12",
+            "2025-08-09", "2025-08-11", "2025-10-20", "2025-12-25"
+        ])
 
         if 'locationId' in df.columns and 'Qty' in df.columns:
             machines = df['locationId'].unique().tolist()
@@ -79,7 +114,6 @@ if uploaded_file:
                 st.warning("Not enough periods after lag creation. Provide more data.")
                 st.stop()
 
-            # --- Train/Test split (last forecast_steps periods for test) ---
             train_size = total_periods - forecast_steps
             if train_size <= 0:
                 st.warning("Not enough data for the selected Forecast Steps.")
@@ -92,15 +126,9 @@ if uploaded_file:
             X_train, y_train = df_train[features], df_train['y']
             X_test, y_test = df_test[features], df_test['y']
 
-            # --- Model training ---
-            model = xgb.XGBRegressor(
-                objective='reg:squarederror',
-                n_estimators=100,
-                random_state=42
-            )
+            model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100, random_state=42)
             model.fit(X_train, y_train)
 
-            # --- Test predictions ---
             y_pred_test = model.predict(X_test)
             df_last_week = pd.DataFrame({
                 'ds': df_test['ds'],
@@ -114,10 +142,7 @@ if uploaded_file:
             mape = np.mean(
                 np.abs((df_last_week['Actual'] - df_last_week['Predicted']) /
                        df_last_week['Actual'].replace(0, np.nan))
-            ) * 100
-            if np.isnan(mape):
-                mape = 0.0
-
+            ) * 100 if not df_last_week['Actual'].eq(0).all() else 0
             rolling_change = np.mean(np.abs(df_resampled['y'].diff(1)))
 
             st.subheader("📈 XGBoost Accuracy Metrics")
@@ -127,7 +152,6 @@ if uploaded_file:
             c3.metric("MAPE", f"{mape:.2f}%")
             c4.metric("Rolling Change", f"{rolling_change:.2f}")
 
-            # --- Future forecasting ---
             forecast_input_for_future = df_resampled.copy()
             last_known_date = forecast_input_for_future['ds'].iloc[-1]
             future_dates = pd.date_range(
@@ -150,7 +174,6 @@ if uploaded_file:
                 X_future = pd.DataFrame([feat_dict])
                 y_future = model.predict(X_future)[0]
                 forecast_list.append({'ds': date, 'Forecast': y_future})
-                # append for rolling lags
                 forecast_input_for_future = pd.concat(
                     [forecast_input_for_future, pd.DataFrame({'ds': [date], 'y': [y_future]})],
                     ignore_index=True
@@ -158,10 +181,10 @@ if uploaded_file:
 
             df_pred = pd.DataFrame(forecast_list).set_index('ds')
 
-            # --- NEW: History window slider (limits *historical* display) ---
+            # Slider for display history
             unit_label = {"D": "day", "W": "week", "M": "month"}[selected_freq]
-            max_history = len(df_resampled)  # total actual periods
-            default_show = min(30, max_history)  # you can change default
+            max_history = len(df_resampled)
+            default_show = min(30, max_history)
             history_window = st.slider(
                 f"🗂️ Display last N {unit_label}s of history",
                 min_value=2,
@@ -170,61 +193,26 @@ if uploaded_file:
             )
 
             cutoff_date = df_resampled['ds'].iloc[-history_window]
-
-            # Filter historical data for plotting only
             df_train_plot = df_train[df_train['ds'] >= cutoff_date]
             df_test_plot = df_test[df_test['ds'] >= cutoff_date]
             df_last_week_plot = df_last_week[df_last_week.index >= cutoff_date]
 
-            st.subheader("📊 XGBoost Forecast")
-            fig, ax = plt.subplots(figsize=(10, 4))
-
-            # Training actuals
-            if not df_train_plot.empty:
-                y_vals = df_train_plot.set_index('ds')['y']
-                y_vals.plot(ax=ax, label='Training Actuals', marker='o', color='blue')
-                for x, y in y_vals.items():
-                    ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
-                                fontsize=8, color='blue')
-
-            # Test actuals
-            if not df_test_plot.empty:
-                y_vals = df_test_plot.set_index('ds')['y']
-                y_vals.plot(ax=ax, label='Test Actuals', marker='o', color='purple')
-                for x, y in y_vals.items():
-                    ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
-                                fontsize=8, color='purple')
-
-            # Test predictions
-            if not df_last_week_plot.empty:
-                y_vals = df_last_week_plot['Predicted']
-                y_vals.plot(ax=ax, label='Test Predictions', linestyle='--', marker='x', color='orange')
-                for x, y in y_vals.items():
-                    ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
-                                fontsize=8, color='orange')
-
-            # Future forecast
-            y_vals = df_pred['Forecast']
-            y_vals.plot(ax=ax, label='Future Forecast', linestyle='--', marker='x', color='green')
-            for x, y in y_vals.items():
-                ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
-                            fontsize=8, color='green')
-
-            ax.set_xlabel("ds")
-            ax.set_ylabel("Qty")
-            ax.legend()
+            fig = plot_xgb_forecast_chart(
+                df_train_plot, df_test_plot, df_last_week_plot, df_pred,
+                selected_machine, freq
+            )
             st.pyplot(fig)
 
-            # Download future forecast
             st.download_button(
                 label="📥 Download Forecast CSV",
                 data=df_pred.reset_index().to_csv(index=False).encode(),
                 file_name=f"{selected_machine}_{freq.lower()}_xgboost_forecast.csv",
                 mime="text/csv"
             )
-
         else:
             st.error("Required columns 'locationId' and 'Qty' not found in the uploaded file.")
 
     except Exception as e:
         st.error(f"❌ Error processing file: {e}")
+else:
+    st.warning("⚠️ Please upload a file from the Home tab to begin.")
