@@ -41,7 +41,8 @@ if df is not None:
         df_resampled.rename(columns={'saleDate': 'ds', 'Qty': 'y'}, inplace=True)
 
         forecast_start = pd.to_datetime("2025-01-01")
-        df_train = df_resampled[(df_resampled['ds'] >= "2023-01-01") & (df_resampled['ds'] < forecast_start)].copy()
+        cutoff = forecast_start - pd.Timedelta(days=365)
+        df_train = df_resampled[(df_resampled['ds'] >= cutoff) & (df_resampled['ds'] < forecast_start)]
         df_2025 = df_resampled[df_resampled['ds'] >= forecast_start].copy()
 
         if len(df_2025) < forecast_steps:

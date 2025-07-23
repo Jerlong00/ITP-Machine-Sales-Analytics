@@ -60,9 +60,9 @@ if df is not None:
         df_resampled["cleaned"] = df_resampled["cleaned"].interpolate(method="linear")
         df_resampled["cleaned_filled"] = df_resampled["cleaned"].bfill().clip(lower=0.01)
 
-        if freq == "Daily" and len(df_resampled) > 180:
-            df_resampled = df_resampled.tail(180)
-            st.info("🧪 Using last 180 days of data.")
+        if freq == "Daily" and len(df_resampled) > 365:
+            df_resampled = df_resampled.tail(365)
+            st.info("🧪 Using last 365 days of data.")
 
         unit_label = {"D": "day", "W": "week", "M": "month"}[selected_freq]
         max_history = len(df_resampled)

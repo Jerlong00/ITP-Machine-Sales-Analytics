@@ -94,8 +94,17 @@ if df is not None:
             df_machine.set_index('saleDate', inplace=True)
             df_machine = df_machine.sort_index()
 
+            # --- Filter for selected machine & resample ---
+            df_machine = df[df['locationId'] == selected_machine].copy()
+            df_machine.set_index('saleDate', inplace=True)
+            df_machine = df_machine.sort_index()
+
             df_resampled = df_machine['Qty'].resample(selected_freq).sum().reset_index()
             df_resampled.rename(columns={'saleDate': 'ds', 'Qty': 'y'}, inplace=True)
+
+            # ✅ Trim to last 365 days of data
+            cutoff = df_resampled['ds'].max() - pd.Timedelta(days=365)
+            df_resampled = df_resampled[df_resampled['ds'] >= cutoff]
 
             # --- Feature engineering ---
             df_resampled['day_of_week'] = df_resampled['ds'].dt.dayofweek

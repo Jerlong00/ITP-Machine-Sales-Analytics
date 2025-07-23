@@ -57,6 +57,8 @@ machines = piv.columns.astype(str).tolist()
 sel_mach = st.selectbox("Select machine to forecast:", machines)
 resamp = "sum" if freq in ["Daily", "Weekly"] else "mean"
 df_res = piv[sel_mach].resample(sel_freq).agg(resamp).to_frame(name=sel_mach)
+cutoff = df_res.index.max() - pd.Timedelta(days=365)
+df_res = df_res[df_res.index >= cutoff]
 
 use_bc = st.checkbox("Apply Box-Cox transformation", value=False)
 zs = zscore(df_res[sel_mach].fillna(method="bfill"))

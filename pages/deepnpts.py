@@ -69,7 +69,8 @@ if "df" in st.session_state:
             .reset_index()
             .rename(columns={"locationId":"unique_id","saleDate":"ds","Qty":"y"})
         )
-
+        cutoff = panel["ds"].max() - pd.Timedelta(days=365)
+        panel = panel[panel["ds"] >= cutoff]
         panel["day_of_week"] = panel["ds"].dt.dayofweek
         panel["is_weekend"] = panel["day_of_week"].isin([5,6]).astype(int)
         panel["month"]       = panel["ds"].dt.month
