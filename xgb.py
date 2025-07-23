@@ -1,12 +1,17 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+from scipy.stats import zscore, boxcox
+from scipy.special import inv_boxcox
 import numpy as np
+import os
 import xgboost as xgb
 
 st.set_page_config(page_title="AI Sales Forecasting", layout="wide")
 st.title("📈 AI Sales Forecasting App (Multi-Frequency)")
+
 st.markdown("✅ Upload your Excel or CSV file with machine sales data. Public holiday support coming soon!")
 
 uploaded_file = st.file_uploader("📤 Upload Excel or CSV File", type=["xlsx", "xls", "csv"], key="xgb_uploader")
@@ -23,14 +28,21 @@ if uploaded_file:
 
         # --- Static holidays list (can later externalize) ---
         public_holidays = pd.to_datetime([
-            "2023-01-01", "2023-01-02", "2023-01-22", "2023-01-23", "2023-01-24",
-            "2023-04-07", "2023-04-22", "2023-05-01", "2023-06-02", "2023-06-29",
-            "2023-08-09", "2023-09-01", "2023-11-12", "2023-11-13", "2023-12-25",
-            "2024-01-01", "2024-02-10", "2024-02-11", "2024-03-29", "2024-04-10",
-            "2024-05-01", "2024-05-22", "2024-06-17", "2024-08-09", "2024-10-31", "2024-12-25",
-            "2025-01-01", "2025-01-29", "2025-01-30", "2025-03-31", "2025-04-18",
-            "2025-05-01", "2025-05-03", "2025-05-12"
-        ])
+        # 2023
+        "2023-01-01", "2023-01-02", "2023-01-22", "2023-01-23", "2023-01-24",
+        "2023-04-07", "2023-04-22", "2023-05-01", "2023-06-02", "2023-06-29",
+        "2023-08-09", "2023-09-01", "2023-11-12", "2023-11-13", "2023-12-25",
+
+        # 2024
+        "2024-01-01", "2024-02-10", "2024-02-11", "2024-02-12", "2024-03-29",
+        "2024-04-10", "2024-05-01", "2024-05-22", "2024-06-17", "2024-08-09",
+        "2024-10-31", "2024-12-25",
+
+        # 2025
+        "2025-01-01", "2025-01-29", "2025-01-30", "2025-01-31", "2025-03-31",
+        "2025-04-18", "2025-05-01", "2025-05-03", "2025-05-05", "2025-05-12",
+        "2025-08-09", "2025-08-11", "2025-10-20", "2025-12-25"
+    ])
 
         if 'locationId' in df.columns and 'Qty' in df.columns:
             machines = df['locationId'].unique().tolist()
@@ -167,20 +179,36 @@ if uploaded_file:
             st.subheader("📊 XGBoost Forecast")
             fig, ax = plt.subplots(figsize=(10, 4))
 
-            # Training actuals (visible window)
+            # Training actuals
             if not df_train_plot.empty:
-                df_train_plot.set_index('ds')['y'].plot(ax=ax, label='Training Actuals', marker='o', color='blue')
+                y_vals = df_train_plot.set_index('ds')['y']
+                y_vals.plot(ax=ax, label='Training Actuals', marker='o', color='blue')
+                for x, y in y_vals.items():
+                    ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
+                                fontsize=8, color='blue')
 
-            # Test actuals (visible window)
+            # Test actuals
             if not df_test_plot.empty:
-                df_test_plot.set_index('ds')['y'].plot(ax=ax, label='Test Actuals', marker='o', color='purple')
+                y_vals = df_test_plot.set_index('ds')['y']
+                y_vals.plot(ax=ax, label='Test Actuals', marker='o', color='purple')
+                for x, y in y_vals.items():
+                    ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
+                                fontsize=8, color='purple')
 
-            # Test predictions (visible window)
+            # Test predictions
             if not df_last_week_plot.empty:
-                df_last_week_plot['Predicted'].plot(ax=ax, label='Test Predictions', linestyle='--', marker='x', color='orange')
+                y_vals = df_last_week_plot['Predicted']
+                y_vals.plot(ax=ax, label='Test Predictions', linestyle='--', marker='x', color='orange')
+                for x, y in y_vals.items():
+                    ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
+                                fontsize=8, color='orange')
 
-            # Future forecast (always shown)
-            df_pred['Forecast'].plot(ax=ax, label='Future Forecast', linestyle='--', marker='x', color='green')
+            # Future forecast
+            y_vals = df_pred['Forecast']
+            y_vals.plot(ax=ax, label='Future Forecast', linestyle='--', marker='x', color='green')
+            for x, y in y_vals.items():
+                ax.annotate(f'{y:.0f}', (x, y), textcoords="offset points", xytext=(0, 6), ha='center',
+                            fontsize=8, color='green')
 
             ax.set_xlabel("ds")
             ax.set_ylabel("Qty")
