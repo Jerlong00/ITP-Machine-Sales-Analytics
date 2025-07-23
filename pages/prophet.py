@@ -7,6 +7,8 @@ from prophet import Prophet
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from scipy.special import inv_boxcox
 from scipy.stats import zscore, boxcox
+from llm import generate_llm_recommendation
+
 
 st.set_page_config(page_title="PROPHET Forecast", layout="wide")
 st.title("🔍 PROPHET Forecasting")
@@ -121,6 +123,17 @@ train_actual = df_res[sel_mach].iloc[-(validation_steps + 60):-validation_steps]
 
 model_prediction = forecast_series.loc[test_actual.index]
 model_future = forecast_series[forecast_series.index > test_actual.index[-1]]
+# 👇 Build summary for LLM
+forecast_summary = {
+    "machine_id": sel_mach,
+    "location": "Unknown",  # Optional: you can map ID to location if known
+    "last_week_avg_sales": df_res[sel_mach].iloc[-7:].mean(),
+    "last_7_days": df_res[sel_mach].iloc[-7:].round(2).tolist(),
+    "next_7_days_forecast": model_future.head(7).round(2).tolist(),
+    "trend": "increasing" if model_future.mean() > df_res[sel_mach].iloc[-7:].mean() else "decreasing",
+    "weekend_peak": any(d.weekday() in [5, 6] for d in model_future.index[:7]),
+    "holiday_next_week": any(d in public_holidays for d in model_future.index[:7])
+}
 
 test_pred = model_prediction
 mae = mean_absolute_error(test_actual, test_pred)
@@ -180,6 +193,17 @@ ax.grid(True)
 ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
 
 st.pyplot(fig)
+
+# 🧠 Optional LLM-based AI Recommendations
+if st.checkbox("🧠 Show AI Recommendations Based on Forecast"):
+    with st.spinner("🧠 Thinking... generating suggestions..."):
+        try:
+            suggestions = generate_llm_recommendation(forecast_summary)
+            st.subheader("💡 AI-Generated Operational Suggestions")
+            st.markdown(suggestions)
+        except Exception as e:
+            st.error(f"❌ LLM error: {e}")
+
 
 st.download_button(
     label="📥 Download Prophet Forecast CSV",

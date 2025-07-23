@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from neuralforecast import NeuralForecast
 from neuralforecast.models import DeepNPTS
+from llm import generate_llm_recommendation
+
 
 def deepnpts_chart_style(ax, title):
     ax.set_title(title, fontsize=18)
@@ -201,6 +203,19 @@ if "df" in st.session_state:
         deepnpts_chart_style(ax, title=f"{selected_machine} Sales Forecast – {freq_label}")
         st.pyplot(fig)
 
+        # 🔍 Build forecast summary for LLM
+        recent_avg = hist_all.tail(7)["y"].mean()
+        forecast_summary = {
+        "machine_id": selected_machine,
+        "location": "Unknown",
+        "last_week_avg_sales": round(recent_avg, 2),
+        "last_7_days": hist_all.tail(7)["y"].round(2).tolist(),
+        "next_7_days_forecast": forecast.head(7).round(2).tolist(),
+        "trend": "increasing" if forecast.mean() > recent_avg else "decreasing",
+        "weekend_peak": any(d.weekday() in [5,6] for d in forecast.head(7).index),
+        "holiday_next_week": any(d in PUBLIC_HOLIDAYS for d in forecast.head(7).index)
+}
+
         st.download_button(
             "📥 Download Forecast CSV",
             data=fut_sel.reset_index().to_csv(index=False).encode(),
@@ -214,3 +229,13 @@ if "df" in st.session_state:
         st.error(f"❌ Error: {e}")
 else:
     st.warning("⚠️ Please upload a file in the Home tab first.")
+
+# 🧠 Optional LLM-based AI Recommendations
+if st.checkbox("🧠 Show AI Recommendations Based on Forecast"):
+    with st.spinner("🧠 Thinking... generating suggestions..."):
+        try:
+            suggestions = generate_llm_recommendation(forecast_summary)
+            st.subheader("💡 AI-Generated Operational Suggestions")
+            st.markdown(suggestions)
+        except Exception as e:
+            st.error(f"❌ LLM error: {e}")
