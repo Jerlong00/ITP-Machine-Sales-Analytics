@@ -6,6 +6,7 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from scipy.stats import zscore
 import warnings
+from llm import generate_llm_recommendation
 
 st.set_page_config(page_title="AI Sales Forecasting", layout="wide")
 st.title("📈 AI Sales Forecasting App (SARIMAX)")
@@ -15,12 +16,8 @@ df = st.session_state.get("df")
 
 if df is not None:
     df = df.copy()
-    date_column_candidates = [col for col in df.columns if 'date' in col.lower()]
-    if not date_column_candidates:
-        st.warning("⚠️ No 'date' column found. Defaulting to first column.")
-        date_column_candidates = [df.columns[0]]
+    selected_date_col = "saleDate"
 
-    selected_date_col = st.selectbox("📅 Select the date column:", date_column_candidates)
     df[selected_date_col] = pd.to_datetime(df[selected_date_col], errors='coerce')
     df.dropna(subset=[selected_date_col], inplace=True)
     df.set_index(selected_date_col, inplace=True)
@@ -62,7 +59,6 @@ if df is not None:
 
         if freq == "Daily" and len(df_resampled) > 365:
             df_resampled = df_resampled.tail(365)
-            st.info("🧪 Using last 365 days of data.")
 
         unit_label = {"D": "day", "W": "week", "M": "month"}[selected_freq]
         max_history = len(df_resampled)
@@ -129,6 +125,15 @@ if df is not None:
             c3.metric("MAPE", f"{mape:.2f}%")
             c4.metric("Rolling Change", f"{rolling_change:.2f}%")
 
+            forecast_summary = {
+    "machine": selected_machine,
+    "trend": "increasing" if rolling_change > 0 else "decreasing" if rolling_change < 0 else "flat",
+    "weekend_peak": exog["is_weekend"].tail(7).mean() > 0.5,
+    "holiday_next_week": exog["is_holiday"].tail(7).mean() > 0.3,
+    "last_week_avg_sales": df_resampled["cleaned_filled"].iloc[-7:].mean()
+}
+
+
         st.subheader(f"📉 {selected_machine} Sales Forecast ({freq} - Next {forecast_steps} period(s))")
         fig, ax = plt.subplots(figsize=(12, 5))
         train_data.plot(ax=ax, label="Historical Training Data", color="blue", marker='o')
@@ -155,6 +160,17 @@ if df is not None:
         ax.grid(True)
 
         st.pyplot(fig)
+
+        from llm import generate_llm_recommendation
+
+        if st.checkbox("🧠 Show AI Recommendations Based on Forecast"):
+            with st.spinner("🧠 Thinking... generating suggestions..."):
+                try:
+                    suggestions = generate_llm_recommendation(forecast_summary)
+                    st.subheader("💡 AI-Generated Operational Suggestions")
+                    st.markdown(suggestions)
+                except Exception as e:
+                    st.error(f"❌ LLM error: {e}")
 
         st.download_button(
             label="📅 Download Forecast CSV",

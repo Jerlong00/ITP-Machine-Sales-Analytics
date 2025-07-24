@@ -31,14 +31,9 @@ public_holidays = pd.to_datetime([
 if df.index.name is not None:
     df.reset_index(inplace=True)
 
-date_cols = [c for c in df.columns if "date" in c.lower()]
-if not date_cols:
-    st.warning("No date column found, defaulting to first column.")
-    date_cols = [df.columns[0]]
-
-sel_date = st.selectbox("Select the date column:", date_cols)
-df[sel_date] = pd.to_datetime(df[sel_date], errors="coerce")
-df = df.dropna(subset=[sel_date])
+sel_date = "saleDate"
+df["saleDate"] = pd.to_datetime(df["saleDate"], errors="coerce")
+df = df.dropna(subset=["saleDate"])
 
 if "locationId" not in df.columns or "Qty" not in df.columns:
     st.error("Your file needs 'locationId' & 'Qty' columns.")
@@ -62,21 +57,30 @@ df_res = piv[sel_mach].resample(sel_freq).agg(resamp).to_frame(name=sel_mach)
 cutoff = df_res.index.max() - pd.Timedelta(days=365)
 df_res = df_res[df_res.index >= cutoff]
 
-use_bc = st.checkbox("Apply Box-Cox transformation", value=False)
+# Optional dynamic history trimming like SARIMAX
+if freq == "Daily" and len(df_res) > 365:
+    df_res = df_res.tail(365)
+elif freq == "Weekly" and len(df_res) > 104:
+    df_res = df_res.tail(104)
+elif freq == "Monthly" and len(df_res) > 36:
+    df_res = df_res.tail(36)
+    
 zs = zscore(df_res[sel_mach].fillna(method="bfill"))
 df_res["clean"] = df_res[sel_mach]
 df_res.loc[(zs > 3) | (zs < -3), "clean"] = np.nan
 df_res["clean"].interpolate(inplace=True)
 df_res["clean_filled"] = df_res["clean"].bfill().clip(lower=0.01)
 
-if use_bc:
-    df_res["trans"], lam = boxcox(df_res["clean_filled"])
-    series_to_use = df_res["trans"]
-else:
-    series_to_use = df_res["clean_filled"]
+zs = zscore(df_res[sel_mach].fillna(method="bfill"))
+df_res["clean"] = df_res[sel_mach]
+df_res.loc[(zs > 3) | (zs < -3), "clean"] = np.nan
+df_res["clean"].interpolate(inplace=True)
+df_res["clean_filled"] = df_res["clean"].bfill().clip(lower=0.01)
+series_to_use = df_res["clean_filled"]
 
 defaults = {"Daily": 30, "Weekly": 12, "Monthly": 12}
-h = st.slider(f"How many {freq.lower()} periods to forecast?", 2, defaults[freq] * 2, defaults[freq])
+forecast_steps = st.slider("⏱️ Forecast Steps (2025)", 2, 60, 14)
+h = forecast_steps
 
 df_prophet = df_res.copy()
 df_prophet = df_prophet[[sel_mach]].rename(columns={sel_mach: "y"})
@@ -116,10 +120,9 @@ forecast.set_index("ds", inplace=True)
 forecast = forecast[["yhat", "yhat_lower", "yhat_upper"]].clip(lower=0, upper=y_cap)
 forecast_series = forecast["yhat"].rename(f"{sel_mach}_forecast")
 
-validation_map = {"D": 10, "W": 20, "M": 6}
-validation_steps = validation_map.get(sel_freq, min(10, h))
+validation_steps = h if h < len(df_res) else len(df_res) // 2
 test_actual = df_res[sel_mach].iloc[-validation_steps:]
-train_actual = df_res[sel_mach].iloc[-(validation_steps + 60):-validation_steps]
+train_actual = df_res[sel_mach].iloc[:-validation_steps]
 
 model_prediction = forecast_series.loc[test_actual.index]
 model_future = forecast_series[forecast_series.index > test_actual.index[-1]]
@@ -146,7 +149,6 @@ c1.metric("MAE", f"{mae:.2f}")
 c2.metric("RMSE", f"{rmse:.2f}")
 c3.metric("MAPE", f"{mape:.2f}%" if not np.isnan(mape) else "N/A")
 
-st.subheader("🔎 Display Settings")
 max_periods = len(df_res)
 display_periods = st.slider(
     f"📆 Show last N {freq.lower()} periods of historical data + forecast",

@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+from llm import generate_llm_recommendation
 
 st.set_page_config(page_title="Rolling Naive Forecast", layout="wide")
 st.title("🌀 Rolling Naive Forecast (Daily / Weekly / Biweekly / Monthly)")
@@ -70,6 +71,7 @@ if df is not None:
         col2.metric("RMSE", f"{rmse:.2f}")
         col3.metric("MAPE", f"{mape:.2f}%")
         col4.metric("Rolling MAE (Train)", f"{rolling_mae:.2f}")
+        
 
         # Chart window
         cutoff_date = pd.to_datetime("2024-12-01")
@@ -113,3 +115,23 @@ if df is not None:
         st.error(f"❌ Error: {e}")
 else:
     st.warning("⚠️ No uploaded file found in session. Please upload your data on the main page.")
+
+# Summary for LLM
+forecast_summary = {
+    "machine": selected_machine,
+    "trend": "increasing" if rolling_mae > 0 else "decreasing" if rolling_mae < 0 else "flat",
+    "weekend_peak": any(df_eval['ds'].dt.weekday >= 5),
+    "holiday_next_week": False,  # You can inject real logic later
+    "last_week_avg_sales": df_train['y'].iloc[-7:].mean() if len(df_train) >= 7 else df_train['y'].mean()
+}
+# 🧠 Optional LLM-based AI Recommendations
+if st.checkbox("🧠 Show AI Recommendations Based on Forecast"):
+    with st.spinner("🧠 Thinking... generating suggestions..."):
+        try:
+            suggestions = generate_llm_recommendation(forecast_summary)
+            st.subheader("💡 AI-Generated Operational Suggestions")
+            st.markdown(suggestions)
+        except Exception as e:
+            st.error(f"❌ LLM error: {e}")
+
+

@@ -8,6 +8,8 @@ from scipy.special import inv_boxcox
 import numpy as np
 import os
 import xgboost as xgb
+from llm import generate_llm_recommendation
+
 
 def plot_xgb_forecast_chart(
     df_train_plot, df_test_plot, df_last_week_plot, df_pred, selected_machine, selected_freq
@@ -161,6 +163,14 @@ if df is not None:
             c3.metric("MAPE", f"{mape:.2f}%")
             c4.metric("Rolling Change", f"{rolling_change:.2f}")
 
+            forecast_summary = {
+    "machine": selected_machine,
+    "trend": "increasing" if rolling_change > 0 else "decreasing" if rolling_change < 0 else "flat",
+    "weekend_peak": df_resampled["is_weekend"].tail(7).mean() > 0.5,
+    "holiday_next_week": df_resampled["is_holiday"].tail(7).mean() > 0.3,
+    "last_week_avg_sales": df_resampled["y"].iloc[-7:].mean()
+}
+
             forecast_input_for_future = df_resampled.copy()
             last_known_date = forecast_input_for_future['ds'].iloc[-1]
             future_dates = pd.date_range(
@@ -211,6 +221,15 @@ if df is not None:
                 selected_machine, freq
             )
             st.pyplot(fig)
+
+            if st.checkbox("🧠 Show AI Recommendations Based on Forecast"):
+                with st.spinner("🧠 Thinking... generating suggestions..."):
+                    try:
+                        suggestions = generate_llm_recommendation(forecast_summary)
+                        st.subheader("💡 AI-Generated Operational Suggestions")
+                        st.markdown(suggestions)
+                    except Exception as e:
+                        st.error(f"❌ LLM error: {e}")
 
             st.download_button(
                 label="📥 Download Forecast CSV",

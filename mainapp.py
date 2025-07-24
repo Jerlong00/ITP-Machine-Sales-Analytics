@@ -4,6 +4,7 @@ import pandas as pd
 st.set_page_config(page_title="AI Sales Forecasting", layout="wide")
 st.title("📤 Upload Your Sales File")
 
+
 # Upload only on mainapp and share with all models
 uploaded_file = st.file_uploader("Upload Excel or CSV File", type=["xlsx", "xls", "csv"])
 
