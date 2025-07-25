@@ -62,15 +62,26 @@ if df is not None:
         y_pred = df_eval['y_pred'].values
         mae = mean_absolute_error(y_true, y_pred)
         rmse = mean_squared_error(y_true, y_pred) ** 0.5
-        mape = np.mean(np.abs((y_true - y_pred) / np.where(y_true == 0, np.nan, y_true))) * 100
-        df_train['diff'] = df_train['y'].diff()
-        rolling_mae = np.mean(np.abs(df_train['diff']))
+        valid_mask = y_true != 0
+        if np.any(valid_mask):
+            mape = np.mean(np.abs((y_true[valid_mask] - y_pred[valid_mask]) / y_true[valid_mask])) * 100
+        else:
+            mape = np.nan
+        rolling_change = (
+    df_eval['y'].replace(0, np.nan)
+    .pct_change()
+    .replace([np.inf, -np.inf], np.nan)
+    .dropna()
+    .mean()
+) * 100
+
+
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("MAE", f"{mae:.2f}")
         col2.metric("RMSE", f"{rmse:.2f}")
-        col3.metric("MAPE", f"{mape:.2f}%")
-        col4.metric("Rolling MAE (Train)", f"{rolling_mae:.2f}")
+        col3.metric("MAPE", f"{mape:.2f}%" if not np.isnan(mape) else "N/A")
+        col4.metric("Rolling Change", f"{rolling_change:.2f}%")
         # Compute confidence interval for actuals after forecast starts
         train_std = df_train['y'].std()
         residual_std = (df_eval['y'] - df_eval['y_pred']).rolling(window=3, min_periods=1).std().fillna(0)
@@ -139,7 +150,7 @@ else:
 # Summary for LLM
 forecast_summary = {
     "machine": selected_machine,
-    "trend": "increasing" if rolling_mae > 0 else "decreasing" if rolling_mae < 0 else "flat",
+    "trend": "increasing" if rolling_change > 0 else "decreasing" if rolling_change < 0 else "flat",
     "weekend_peak": any(df_eval['ds'].dt.weekday >= 5),
     "holiday_next_week": False,  # You can inject real logic later
     "last_week_avg_sales": df_train['y'].iloc[-7:].mean() if len(df_train) >= 7 else df_train['y'].mean()
