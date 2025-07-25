@@ -188,6 +188,12 @@ if "df" in st.session_state:
         if not test_vis.empty:
             actual = test_vis["Actual"]
             pred = test_vis["Predicted"]
+            # 95% CI around test predictions (DeepNPTS has no built-in uncertainty, so we approximate using residual std)
+            residuals = actual - pred
+            residual_std = residuals.rolling(window=3, min_periods=1).std().fillna(0)
+            ci_upper = pred + 1.96 * residual_std
+            ci_lower = pred - 1.96 * residual_std
+            ax.fill_between(pred.index, ci_lower, ci_upper, color="orange", alpha=0.2, label="95% CI (Predictions)")
             actual.plot(ax=ax, label="Test Actuals", color="purple", marker="o")
             pred.plot(ax=ax, label="Test Predictions", color="orange", linestyle="--", marker="x")
             for x, y in actual.items():

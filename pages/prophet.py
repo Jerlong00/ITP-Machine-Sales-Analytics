@@ -142,12 +142,15 @@ test_pred = model_prediction
 mae = mean_absolute_error(test_actual, test_pred)
 rmse = mean_squared_error(test_actual, test_pred) ** 0.5
 mape = np.mean(np.abs((test_actual - test_pred) / test_actual.replace(0, np.nan))) * 100
+rolling_change = np.mean(
+    test_actual.replace(0, np.nan).pct_change().replace([np.inf, -np.inf], np.nan).dropna()) * 100
 
 st.subheader("📊 Forecast Accuracy Metrics")
-c1, c2, c3 = st.columns(3)
+c1, c2, c3, c4 = st.columns(4)
 c1.metric("MAE", f"{mae:.2f}")
 c2.metric("RMSE", f"{rmse:.2f}")
 c3.metric("MAPE", f"{mape:.2f}%" if not np.isnan(mape) else "N/A")
+c4.metric("Rolling Change", f"{rolling_change:.2f}%")
 
 max_periods = len(df_res)
 display_periods = st.slider(
@@ -157,8 +160,13 @@ display_periods = st.slider(
     value=min(60, max_periods)
 )
 train_actual = df_res[sel_mach].iloc[-(validation_steps + display_periods):-validation_steps]
+# Use Prophet's built-in CI bounds around test predictions
+ci_lower = forecast.loc[test_actual.index, "yhat_lower"]
+ci_upper = forecast.loc[test_actual.index, "yhat_upper"]
 
-# 📈 Final Forecast Plot — matches x-axis layout exactly like Rolling Naive Forecast
+
+
+
 st.subheader(f"📈 {sel_mach} Sales Forecast - {freq}")
 fig, ax = plt.subplots(figsize=(12, 5))
 
@@ -173,6 +181,7 @@ for x, y in zip(test_actual.index, test_actual.values):
 ax.plot(model_prediction.index, model_prediction.values, color="orange", linestyle="--", marker="x", label="Model Predictions (Test)")
 for x, y in zip(model_prediction.index, model_prediction.values):
     ax.text(x, y + 0.5, f"{y:.0f}", fontsize=8, ha='center', color="orange")
+ax.fill_between(test_actual.index, ci_lower, ci_upper, color="orange", alpha=0.2, label="95% CI (Prediction)")
 
 ax.plot(model_future.index, model_future.values, color="green", linestyle="--", marker="x", label="Model Forecast (Future)")
 for x, y in zip(model_future.index, model_future.values):
@@ -193,6 +202,7 @@ ax.set_ylabel("Sales", fontsize=14)
 ax.set_title(f"{sel_mach} Sales Forecast - {freq}", fontsize=18)
 ax.grid(True)
 ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
+
 
 st.pyplot(fig)
 

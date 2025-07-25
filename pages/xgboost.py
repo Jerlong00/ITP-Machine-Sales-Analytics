@@ -30,10 +30,21 @@ def plot_xgb_forecast_chart(
         for x, y in y_vals.items():
             ax.text(x, y + 0.5, f'{y:.0f}', color='purple', fontsize=9, ha='center')
 
-    # Test predictions
+    # Test predictions with CI
     if not df_last_week_plot.empty:
         y_vals = df_last_week_plot['Predicted']
+        ci_lower = df_last_week_plot['ci_lower']
+        ci_upper = df_last_week_plot['ci_upper']
+        
+        # Plot 95% confidence band
+        ax.fill_between(df_last_week_plot.index, ci_lower, ci_upper, color='orange', alpha=0.2, label='95% CI (Prediction)')
+        
+        # Plot prediction line
         y_vals.plot(ax=ax, label='Model Predictions (Test)', linestyle='--', marker='x', color='orange')
+    
+    for x, y in y_vals.items():
+        ax.text(x, y + 0.5, f'{y:.0f}', color='orange', fontsize=9, ha='center')
+
         for x, y in y_vals.items():
             ax.text(x, y + 0.5, f'{y:.0f}', color='orange', fontsize=9, ha='center')
 
@@ -146,6 +157,11 @@ if df is not None:
                 'Actual': y_test.values,
                 'Predicted': y_pred_test
             }).set_index('ds')
+            # Compute 95% CI around XGBoost predictions using residual std dev
+            residuals = df_last_week['Actual'] - df_last_week['Predicted']
+            residual_std = residuals.rolling(window=3, min_periods=1).std().fillna(0)
+            df_last_week['ci_lower'] = df_last_week['Predicted'] - 1.96 * residual_std
+            df_last_week['ci_upper'] = df_last_week['Predicted'] + 1.96 * residual_std
 
             # --- Metrics ---
             mae = mean_absolute_error(df_last_week['Actual'], df_last_week['Predicted'])

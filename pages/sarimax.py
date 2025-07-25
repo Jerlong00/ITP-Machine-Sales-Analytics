@@ -107,12 +107,15 @@ if df is not None:
         if not forecast_df.isna().all():
             train_data = df_display["cleaned_filled"].iloc[:-forecast_steps].copy()
             test_data = df_display["cleaned_filled"].iloc[-forecast_steps:].copy()
-            test_predictions = results.get_prediction(
+            test_pred_obj = results.get_prediction(
                 start=test_data.index[0],
                 end=test_data.index[-1],
                 exog=exog[-forecast_steps:]
-            ).predicted_mean
+            )
+            test_predictions = test_pred_obj.predicted_mean
+            test_ci = test_pred_obj.conf_int(alpha=0.05)  # 95% CI
 
+            
             mae = mean_absolute_error(test_data, test_predictions)
             rmse = mean_squared_error(test_data, test_predictions) ** 0.5
             mape = np.mean(np.abs((test_data - test_predictions) / test_data.replace(0, np.nan))) * 100
@@ -138,11 +141,21 @@ if df is not None:
         fig, ax = plt.subplots(figsize=(12, 5))
         train_data.plot(ax=ax, label="Historical Training Data", color="blue", marker='o')
         test_data.plot(ax=ax, label="Validation Actuals", color="purple", marker='o')
+
         if not test_predictions.isna().all():
             test_predictions.plot(ax=ax, label="Model Predictions (Test)", color="orange", linestyle="--", marker='x')
         if not forecast_df.isna().all():
             forecast_df.plot(ax=ax, label="Model Forecast (Future)", color="green", linestyle="--", marker='x')
-
+        # Plot 95% Confidence Interval for validation predictions
+        if 'test_ci' in locals():
+            ax.fill_between(
+                test_ci.index,
+                test_ci.iloc[:, 0],  # lower bound
+                test_ci.iloc[:, 1],  # upper bound
+                color='orange',
+                alpha=0.2,
+                label='95% CI (Validation)'
+            )
         for x, y in train_data.items():
             ax.text(x, y + 0.5, f"{y:.0f}", color='blue', fontsize=9, ha='center')
         for x, y in test_data.items():

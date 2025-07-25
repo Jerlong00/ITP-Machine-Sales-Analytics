@@ -71,7 +71,11 @@ if df is not None:
         col2.metric("RMSE", f"{rmse:.2f}")
         col3.metric("MAPE", f"{mape:.2f}%")
         col4.metric("Rolling MAE (Train)", f"{rolling_mae:.2f}")
-        
+        # Compute confidence interval for actuals after forecast starts
+        train_std = df_train['y'].std()
+        residual_std = (df_eval['y'] - df_eval['y_pred']).rolling(window=3, min_periods=1).std().fillna(0)
+        ci_upper = df_eval['y_pred'] + 1.96 * residual_std
+        ci_lower = df_eval['y_pred'] - 1.96 * residual_std
 
         # Chart window
         cutoff_date = pd.to_datetime("2024-12-01")
@@ -85,6 +89,20 @@ if df is not None:
 
         df_plot.set_index('ds')['y'].plot(ax=ax, label='Actual', marker='o', color='blue')
         df_plot.set_index('ds')['y_pred'].plot(ax=ax, label='Naive Forecast', linestyle='--', marker='x', color='orange')
+        # Add 95% CI band starting from forecast start
+        ci_plot = df_eval.set_index('ds')[['y']].copy()
+        ci_plot['ci_lower'] = ci_lower.values
+        ci_plot['ci_upper'] = ci_upper.values
+        ci_plot = ci_plot[(ci_plot.index >= forecast_start) & (ci_plot.index <= forecast_end)]
+
+        ax.fill_between(
+            ci_plot.index,
+            ci_plot['ci_lower'],
+            ci_plot['ci_upper'],
+            color='orange',
+            alpha=0.2,
+            label='95% CI (Naive Prediction)'
+        )
 
         for x, y in zip(df_plot['ds'], df_plot['y']):
             if pd.notna(y):
@@ -92,6 +110,7 @@ if df is not None:
         for x, y_pred in zip(df_plot['ds'], df_plot['y_pred']):
             if pd.notna(y_pred):
                 ax.text(x, y_pred + 0.5, f"{y_pred:.0f}", color='orange', fontsize=9, ha='center')
+        
 
         ax.axvline(x=forecast_start, linestyle='--', color='gray', label="Forecast Start")
         ax.set_title(f"Rolling Naive Backtest ({forecast_steps} Steps) — {selected_machine}", fontsize=18)
@@ -100,6 +119,7 @@ if df is not None:
         ax.tick_params(axis='both', labelsize=12)
         ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
         ax.grid(True)
+        
         st.pyplot(fig)
 
         # CSV download
